@@ -1,0 +1,11 @@
+# Python stuff
+venv/
+__pycache__/
+*.py[cod]
+
+# Database
+orienttrack.db
+
+# System files
+.DS_Store
+.env
