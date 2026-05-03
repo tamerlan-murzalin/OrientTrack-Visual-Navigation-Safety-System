@@ -28,11 +28,21 @@ class RoutePoint(db.Model):
     lng = db.Column(db.Float, nullable=False)
     timestamp = db.Column(db.DateTime, default=datetime.utcnow)
 
+class AnchorPoint(db.Model):
+    # visual anchors for precise unloading locations
+    id = db.Column(db.Integer, primary_key=True)
+    driver_id = db.Column(db.Integer, db.ForeignKey('driver.id'))
+    lat = db.Column(db.Float, nullable=False)
+    lng = db.Column(db.Float, nullable=False)
+    photo_id = db.Column(db.String(100)) # telegram file_id for now
+    note = db.Column(db.String(255))
+    timestamp = db.Column(db.DateTime, default=datetime.utcnow)
+
 # init tables
 with app.app_context():
     db.create_all()
 
-# endpoint to receive data from the telegram bot
+# endpoint to receive regular location updates
 @app.route('/api/update_location', methods=['POST'])
 def update_location():
     data = request.json
@@ -43,26 +53,49 @@ def update_location():
     lat = data.get('lat')
     lng = data.get('lng')
     
-    # check if we already have this driver
     driver = Driver.query.filter_by(telegram_id=tg_id).first()
     if not driver:
-        # temporary name until we implement proper registration
         driver = Driver(telegram_id=tg_id, name=f"User {tg_id[-4:]}")
         db.session.add(driver)
         db.session.flush() 
     
-    # update driver current state
     driver.last_lat = lat
     driver.last_lng = lng
     driver.last_update = datetime.utcnow()
     driver.status = 'Active'
     
-    # log this point in the route history
     new_point = RoutePoint(driver_id=driver.id, lat=lat, lng=lng)
     db.session.add(new_point)
-    
     db.session.commit()
+    
     return jsonify({"status": "ok"}), 200
+
+# endpoint to save visual anchors
+@app.route('/api/add_anchor', methods=['POST'])
+def add_anchor():
+    data = request.json
+    if not data:
+        return jsonify({"error": "no data"}), 400
+        
+    tg_id = str(data.get('telegram_id'))
+    driver = Driver.query.filter_by(telegram_id=tg_id).first()
+    
+    if not driver:
+        return jsonify({"error": "driver not found"}), 404
+        
+    anchor = AnchorPoint(
+        driver_id=driver.id,
+        lat=data.get('lat'),
+        lng=data.get('lng'),
+        photo_id=data.get('photo_id'),
+        note=data.get('note', 'Arrived at anchor')
+    )
+    
+    db.session.add(anchor)
+    driver.status = 'At Anchor'
+    db.session.commit()
+    
+    return jsonify({"status": "anchor saved"}), 200
 
 @app.route('/')
 def index():
