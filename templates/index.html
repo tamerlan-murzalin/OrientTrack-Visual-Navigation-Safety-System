@@ -3,30 +3,64 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Logistics Dashboard</title>
+    <title>OrientTrack - Dispatcher Dashboard</title>
+    
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+    
     <style>
-        body { font-family: Arial, sans-serif; margin: 20px; }
-        .map-placeholder {
-            width: 100%;
-            height: 500px;
-            background: #e9e9e9;
-            border: 1px solid #ccc;
+        body { 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+            margin: 0; 
+            padding: 20px; 
+            background-color: #f8f9fa;
+        }
+        .header {
             display: flex;
+            justify-content: space-between;
             align-items: center;
-            justify-content: center;
-            color: #555;
+            margin-bottom: 20px;
+        }
+        .map-container {
+            width: 100%;
+            height: 600px;
+            background-color: #e9e9e9;
+            border: 2px solid #ccc;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
         }
     </style>
 </head>
 <body>
-    <h1>OrientTrack Monitoring Panel</h1>
-    <div class="map-placeholder">
-        <!-- Map will be initialized here with Leaflet.js -->
-        Loading OpenStreetMap...
+    <div class="header">
+        <h1>OrientTrack Monitoring Panel</h1>
+        <div>
+            <span style="background: #28a745; color: white; padding: 5px 10px; border-radius: 4px;">System Online</span>
+        </div>
     </div>
-    <div id="driver-list">
-        <h3>Active Drivers</h3>
-        <p>No active drivers yet.</p>
-    </div>
+    
+    <!-- This div is where Leaflet will inject the map -->
+    <div id="map" class="map-container"></div>
+
+    <!-- Leaflet JS -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+    
+    <script>
+        // Initialize the map and set its view to a central point in Almaty (for testing)
+        // We will make this dynamic based on driver data later
+        var map = L.map('map').setView([43.2389, 76.8897], 13);
+
+        // Load OpenStreetMap tiles
+        L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            maxZoom: 19,
+            attribution: '&copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+        }).addTo(map);
+
+        // Add a test marker to verify it works
+        var marker = L.marker([43.2389, 76.8897]).addTo(map);
+        marker.bindPopup("<b>Test Marker</b><br>Map is working.").openPopup();
+        
+        console.log("Map initialized successfully");
+    </script>
 </body>
 </html>
