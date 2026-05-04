@@ -34,7 +34,7 @@ class AnchorPoint(db.Model):
     driver_id = db.Column(db.Integer, db.ForeignKey('driver.id'))
     lat = db.Column(db.Float, nullable=False)
     lng = db.Column(db.Float, nullable=False)
-    photo_id = db.Column(db.String(100)) # telegram file_id for now
+    photo_id = db.Column(db.String(100)) 
     note = db.Column(db.String(255))
     timestamp = db.Column(db.DateTime, default=datetime.utcnow)
 
@@ -96,6 +96,39 @@ def add_anchor():
     db.session.commit()
     
     return jsonify({"status": "anchor saved"}), 200
+
+# api for the frontend dashboard to fetch active drivers
+@app.route('/api/get_drivers', methods=['GET'])
+def get_drivers():
+    drivers = Driver.query.all()
+    result = []
+    for d in drivers:
+        # only send drivers that have coordinates
+        if d.last_lat and d.last_lng:
+            result.append({
+                "id": d.id,
+                "name": d.name,
+                "status": d.status,
+                "lat": d.last_lat,
+                "lng": d.last_lng,
+                "last_update": d.last_update.isoformat() if d.last_update else None
+            })
+    return jsonify(result), 200
+
+# api to fetch visual anchors for the map
+@app.route('/api/get_anchors', methods=['GET'])
+def get_anchors():
+    anchors = AnchorPoint.query.all()
+    result = []
+    for a in anchors:
+        result.append({
+            "id": a.id,
+            "driver_id": a.driver_id,
+            "lat": a.lat,
+            "lng": a.lng,
+            "note": a.note
+        })
+    return jsonify(result), 200
 
 @app.route('/')
 def index():
