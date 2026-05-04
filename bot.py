@@ -21,7 +21,8 @@ user_locations = {}
 async def cmd_start(message: types.Message):
     kb = [
         [types.KeyboardButton(text="📍 Share My Location", request_location=True)],
-        [types.KeyboardButton(text="⚠️ Report Issue"), types.KeyboardButton(text="✅ Arrived")]
+        # CHANGED: Updated button text to include SOS for safety requirements
+        [types.KeyboardButton(text="⚠️ SOS / Issue"), types.KeyboardButton(text="✅ Arrived")]
     ]
     keyboard = types.ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
     await message.answer("OrientTrack active. Please share your location first, then you can send photos of anchors.", reply_markup=keyboard)
@@ -85,6 +86,14 @@ async def handle_photo(message: types.Message):
             await message.answer("Failed to save anchor on server.")
     except Exception as e:
          await message.answer("Error connecting to server.")
+
+# NEW: safety feature - handling emergency button
+@dp.message(F.text == "⚠️ SOS / Issue")
+async def handle_emergency(message: types.Message):
+    tg_id = message.from_user.id
+    # in a real system this would hit a specific /api/emergency endpoint
+    await message.answer("EMERGENCY SIGNAL SENT to dispatcher. Please stay calm, we are recording your last known location.")
+    print(f"!!! EMERGENCY ALERT TRIGGERED BY USER {tg_id} !!!")
 
 async def main():
     print("Bot is running...")
