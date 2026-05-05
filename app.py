@@ -102,19 +102,29 @@ def add_anchor():
 def get_drivers():
     drivers = Driver.query.all()
     result = []
+    now = datetime.utcnow() # get current time for safety check
+    
     for d in drivers:
         if d.last_lat and d.last_lng:
+            current_status = d.status
+            
+            # Safety Timer Logic: check if connection is lost for > 5 minutes (300 seconds)
+            if d.last_update and (now - d.last_update).total_seconds() > 300:
+                # Don't trigger warning if the driver has already arrived at the anchor
+                if current_status != 'At Anchor':
+                    current_status = 'Warning (Lost Signal)'
+
             result.append({
                 "id": d.id,
                 "name": d.name,
-                "status": d.status,
+                "status": current_status,
                 "lat": d.last_lat,
                 "lng": d.last_lng,
                 "last_update": d.last_update.isoformat() if d.last_update else None
             })
     return jsonify(result), 200
 
-# NEW: api to fetch the full breadcrumb trail for a specific driver
+# api to fetch the full breadcrumb trail for a specific driver
 @app.route('/api/get_route/<int:driver_id>', methods=['GET'])
 def get_route(driver_id):
     # fetch all points ordered by time

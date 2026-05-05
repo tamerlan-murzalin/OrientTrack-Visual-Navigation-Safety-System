@@ -44,6 +44,11 @@
             background-color: #f0f8ff;
         }
         .status-active { color: #28a745; font-weight: bold; }
+        
+        /* NEW: styling for the safety warning */
+        .status-warning { color: #dc3545; font-weight: bold; animation: blink 1s linear infinite; }
+        @keyframes blink { 50% { opacity: 0.5; } }
+
         .map-container {
             flex-grow: 1;
             height: 630px;
@@ -60,7 +65,6 @@
     </div>
     
     <div class="main-content">
-        <!-- New Sidebar for Driver List -->
         <div class="sidebar">
             <h3>Active Fleet</h3>
             <div id="driver-list">
@@ -81,22 +85,17 @@
         }).addTo(map);
 
         var driverMarkers = {};
-        var driverRoutes = {}; // To store the polylines (route paths)
+        var driverRoutes = {}; 
 
-        // Function to draw the path a driver has taken
         function drawRoute(driverId) {
             fetch(`/api/get_route/${driverId}`)
                 .then(response => response.json())
                 .then(data => {
-                    // clear existing route line if it exists
                     if (driverRoutes[driverId]) {
                         map.removeLayer(driverRoutes[driverId]);
                     }
                     
-                    // extract coordinates
                     var latlngs = data.map(point => [point.lat, point.lng]);
-                    
-                    // draw a new blue line
                     var polyline = L.polyline(latlngs, {color: '#007bff', weight: 4, opacity: 0.7}).addTo(map);
                     driverRoutes[driverId] = polyline;
                 })
@@ -110,15 +109,16 @@
                     var listHtml = "";
                     
                     data.forEach(driver => {
-                        // Update UI Sidebar
+                        // NEW: Check if status contains "Warning" and apply the red blinking class
+                        var statusClass = driver.status.includes('Warning') ? 'status-warning' : 'status-active';
+
                         listHtml += `
                             <div class="driver-card" onclick="drawRoute(${driver.id}); map.setView([${driver.lat}, ${driver.lng}], 15);">
                                 <strong>${driver.name}</strong><br>
-                                Status: <span class="status-active">${driver.status}</span>
+                                Status: <span class="${statusClass}">${driver.status}</span>
                             </div>
                         `;
 
-                        // Update Marker
                         if (driverMarkers[driver.id]) {
                             driverMarkers[driver.id].setLatLng([driver.lat, driver.lng]);
                         } else {
@@ -127,7 +127,6 @@
                             driverMarkers[driver.id] = m;
                         }
 
-                        // Automatically fetch and draw route for active drivers
                         drawRoute(driver.id);
                     });
                     
@@ -153,7 +152,6 @@
         fetchDriverLocations();
         fetchAnchors();
 
-        // Update every 10 seconds
         setInterval(fetchDriverLocations, 10000);
     </script>
 </body>
