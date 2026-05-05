@@ -103,7 +103,6 @@ def get_drivers():
     drivers = Driver.query.all()
     result = []
     for d in drivers:
-        # only send drivers that have coordinates
         if d.last_lat and d.last_lng:
             result.append({
                 "id": d.id,
@@ -113,6 +112,20 @@ def get_drivers():
                 "lng": d.last_lng,
                 "last_update": d.last_update.isoformat() if d.last_update else None
             })
+    return jsonify(result), 200
+
+# NEW: api to fetch the full breadcrumb trail for a specific driver
+@app.route('/api/get_route/<int:driver_id>', methods=['GET'])
+def get_route(driver_id):
+    # fetch all points ordered by time
+    points = RoutePoint.query.filter_by(driver_id=driver_id).order_by(RoutePoint.timestamp.asc()).all()
+    result = []
+    for p in points:
+        result.append({
+            "lat": p.lat,
+            "lng": p.lng,
+            "time": p.timestamp.isoformat()
+        })
     return jsonify(result), 200
 
 # api to fetch visual anchors for the map
