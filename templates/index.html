@@ -7,7 +7,7 @@
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin=""/>
     <style>
         body { 
-            font-family: Arial, sans-serif; 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
             margin: 0; 
             padding: 20px; 
             background-color: #f8f9fa;
@@ -17,27 +17,62 @@
             justify-content: space-between;
             align-items: center;
             margin-bottom: 20px;
+            background: white;
+            padding: 15px 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
         }
-        .map-container {
-            width: 100%;
+        .main-content {
+            display: flex;
+            gap: 20px;
+        }
+        .sidebar {
+            width: 300px;
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
             height: 600px;
+            overflow-y: auto;
+        }
+        .driver-card {
+            padding: 10px;
+            border-bottom: 1px solid #eee;
+            cursor: pointer;
+        }
+        .driver-card:hover {
+            background-color: #f0f8ff;
+        }
+        .status-active { color: #28a745; font-weight: bold; }
+        .map-container {
+            flex-grow: 1;
+            height: 630px;
             background-color: #e9e9e9;
-            border: 2px solid #ccc;
+            border: 2px solid #ddd;
             border-radius: 8px;
         }
     </style>
 </head>
 <body>
     <div class="header">
-        <h1>OrientTrack Monitoring Panel</h1>
-        <span style="background: #28a745; color: white; padding: 5px 10px; border-radius: 4px;">Live</span>
+        <h1 style="margin: 0;">OrientTrack Monitoring Panel</h1>
+        <span style="background: #28a745; color: white; padding: 5px 15px; border-radius: 20px; font-weight: bold;">System Live</span>
     </div>
     
-    <div id="map" class="map-container"></div>
+    <div class="main-content">
+        <!-- New Sidebar for Driver List -->
+        <div class="sidebar">
+            <h3>Active Fleet</h3>
+            <div id="driver-list">
+                <p>Loading drivers...</p>
+            </div>
+        </div>
+
+        <div id="map" class="map-container"></div>
+    </div>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
     <script>
-        // map centered roughly on Central Asia/Kazakhstan
         var map = L.map('map').setView([43.2389, 76.8897], 11);
 
         L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -45,49 +80,81 @@
             attribution: '© OpenStreetMap'
         }).addTo(map);
 
-        // store active markers so we can update their positions
         var driverMarkers = {};
+        var driverRoutes = {}; // To store the polylines (route paths)
+
+        // Function to draw the path a driver has taken
+        function drawRoute(driverId) {
+            fetch(`/api/get_route/${driverId}`)
+                .then(response => response.json())
+                .then(data => {
+                    // clear existing route line if it exists
+                    if (driverRoutes[driverId]) {
+                        map.removeLayer(driverRoutes[driverId]);
+                    }
+                    
+                    // extract coordinates
+                    var latlngs = data.map(point => [point.lat, point.lng]);
+                    
+                    // draw a new blue line
+                    var polyline = L.polyline(latlngs, {color: '#007bff', weight: 4, opacity: 0.7}).addTo(map);
+                    driverRoutes[driverId] = polyline;
+                })
+                .catch(err => console.error("Error fetching route:", err));
+        }
 
         function fetchDriverLocations() {
             fetch('/api/get_drivers')
                 .then(response => response.json())
                 .then(data => {
+                    var listHtml = "";
+                    
                     data.forEach(driver => {
-                        // if marker exists, just move it
+                        // Update UI Sidebar
+                        listHtml += `
+                            <div class="driver-card" onclick="drawRoute(${driver.id}); map.setView([${driver.lat}, ${driver.lng}], 15);">
+                                <strong>${driver.name}</strong><br>
+                                Status: <span class="status-active">${driver.status}</span>
+                            </div>
+                        `;
+
+                        // Update Marker
                         if (driverMarkers[driver.id]) {
                             driverMarkers[driver.id].setLatLng([driver.lat, driver.lng]);
                         } else {
-                            // create new marker
                             var m = L.marker([driver.lat, driver.lng]).addTo(map);
                             m.bindPopup(`<b>${driver.name}</b><br>Status: ${driver.status}`);
                             driverMarkers[driver.id] = m;
                         }
+
+                        // Automatically fetch and draw route for active drivers
+                        drawRoute(driver.id);
                     });
-                })
-                .catch(err => console.error("Error fetching drivers:", err));
+                    
+                    document.getElementById('driver-list').innerHTML = listHtml || "<p>No active drivers.</p>";
+                });
         }
 
-        // fetch visual anchors
         function fetchAnchors() {
             fetch('/api/get_anchors')
                 .then(response => response.json())
                 .then(data => {
                     data.forEach(anchor => {
-                        // using a circle for anchors to distinguish from drivers
                         L.circleMarker([anchor.lat, anchor.lng], {
-                            color: 'red',
-                            radius: 8
-                        }).addTo(map).bindPopup(`<b>Anchor Point</b><br>${anchor.note}`);
+                            color: '#dc3545',
+                            fillColor: '#dc3545',
+                            fillOpacity: 0.8,
+                            radius: 6
+                        }).addTo(map).bindPopup(`<b>Visual Anchor</b><br>${anchor.note}`);
                     });
                 });
         }
 
-        // load data immediately
         fetchDriverLocations();
         fetchAnchors();
 
-        // poll for new driver locations every 5 seconds
-        setInterval(fetchDriverLocations, 5000);
+        // Update every 10 seconds
+        setInterval(fetchDriverLocations, 10000);
     </script>
 </body>
 </html>
