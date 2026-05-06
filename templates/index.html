@@ -27,31 +27,34 @@
             gap: 20px;
         }
         .sidebar {
-            width: 300px;
+            width: 320px;
             background: white;
             padding: 15px;
             border-radius: 8px;
             box-shadow: 0 2px 4px rgba(0,0,0,0.05);
-            height: 600px;
+            height: 650px;
             overflow-y: auto;
         }
         .driver-card {
-            padding: 10px;
+            padding: 12px;
             border-bottom: 1px solid #eee;
             cursor: pointer;
+            transition: background 0.2s;
         }
         .driver-card:hover {
             background-color: #f0f8ff;
         }
         .status-active { color: #28a745; font-weight: bold; }
-        
-        /* NEW: styling for the safety warning */
         .status-warning { color: #dc3545; font-weight: bold; animation: blink 1s linear infinite; }
+        
+        /* New style for the time display */
+        .last-seen { font-size: 0.85em; color: #6c757d; font-style: italic; }
+        
         @keyframes blink { 50% { opacity: 0.5; } }
 
         .map-container {
             flex-grow: 1;
-            height: 630px;
+            height: 680px;
             background-color: #e9e9e9;
             border: 2px solid #ddd;
             border-radius: 8px;
@@ -61,14 +64,14 @@
 <body>
     <div class="header">
         <h1 style="margin: 0;">OrientTrack Monitoring Panel</h1>
-        <span style="background: #28a745; color: white; padding: 5px 15px; border-radius: 20px; font-weight: bold;">System Live</span>
+        <span id="system-status" style="background: #28a745; color: white; padding: 5px 15px; border-radius: 20px; font-weight: bold;">System Live</span>
     </div>
     
     <div class="main-content">
         <div class="sidebar">
-            <h3>Active Fleet</h3>
+            <h3 style="margin-top: 0;">Fleet Monitoring</h3>
             <div id="driver-list">
-                <p>Loading drivers...</p>
+                <p>Connecting to fleet...</p>
             </div>
         </div>
 
@@ -94,12 +97,11 @@
                     if (driverRoutes[driverId]) {
                         map.removeLayer(driverRoutes[driverId]);
                     }
-                    
                     var latlngs = data.map(point => [point.lat, point.lng]);
-                    var polyline = L.polyline(latlngs, {color: '#007bff', weight: 4, opacity: 0.7}).addTo(map);
+                    var polyline = L.polyline(latlngs, {color: '#007bff', weight: 4, opacity: 0.6}).addTo(map);
                     driverRoutes[driverId] = polyline;
                 })
-                .catch(err => console.error("Error fetching route:", err));
+                .catch(err => console.error("Error drawing route:", err));
         }
 
         function fetchDriverLocations() {
@@ -107,14 +109,21 @@
                 .then(response => response.json())
                 .then(data => {
                     var listHtml = "";
+                    var now = new Date();
                     
                     data.forEach(driver => {
-                        // NEW: Check if status contains "Warning" and apply the red blinking class
+                        // Logic for relative time "Last Seen"
+                        var lastUpdate = new Date(driver.last_update);
+                        var diffMs = now - lastUpdate;
+                        var diffMins = Math.floor(diffMs / 60000);
+                        var timeText = diffMins > 0 ? `${diffMins} min ago` : "just now";
+                        
                         var statusClass = driver.status.includes('Warning') ? 'status-warning' : 'status-active';
 
                         listHtml += `
                             <div class="driver-card" onclick="drawRoute(${driver.id}); map.setView([${driver.lat}, ${driver.lng}], 15);">
                                 <strong>${driver.name}</strong><br>
+                                <span class="last-seen">Last signal: ${timeText}</span><br>
                                 Status: <span class="${statusClass}">${driver.status}</span>
                             </div>
                         `;
@@ -123,14 +132,14 @@
                             driverMarkers[driver.id].setLatLng([driver.lat, driver.lng]);
                         } else {
                             var m = L.marker([driver.lat, driver.lng]).addTo(map);
-                            m.bindPopup(`<b>${driver.name}</b><br>Status: ${driver.status}`);
+                            m.bindPopup(`<b>${driver.name}</b><br>Last signal: ${timeText}`);
                             driverMarkers[driver.id] = m;
                         }
-
+                        
                         drawRoute(driver.id);
                     });
                     
-                    document.getElementById('driver-list').innerHTML = listHtml || "<p>No active drivers.</p>";
+                    document.getElementById('driver-list').innerHTML = listHtml || "<p>No drivers active.</p>";
                 });
         }
 
@@ -142,8 +151,8 @@
                         L.circleMarker([anchor.lat, anchor.lng], {
                             color: '#dc3545',
                             fillColor: '#dc3545',
-                            fillOpacity: 0.8,
-                            radius: 6
+                            fillOpacity: 0.7,
+                            radius: 7
                         }).addTo(map).bindPopup(`<b>Visual Anchor</b><br>${anchor.note}`);
                     });
                 });
