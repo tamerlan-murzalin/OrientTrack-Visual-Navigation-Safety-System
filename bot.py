@@ -3,15 +3,16 @@ import asyncio
 import requests
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
+import config # Importing our centralized configuration
 
-# config
-BOT_TOKEN = "BOT_TOKEN_HERE"
-SERVER_URL = "http://127.0.0.1:5000/api/update_location"
-ANCHOR_URL = "http://127.0.0.1:5000/api/add_anchor"
+# URLs are now built dynamically from config
+SERVER_URL = f"{config.SERVER_URL}/api/update_location"
+ANCHOR_URL = f"{config.SERVER_URL}/api/add_anchor"
 
 logging.basicConfig(level=logging.INFO)
 
-bot = Bot(token=BOT_TOKEN)
+# Token is now securely loaded from config
+bot = Bot(token=config.TELEGRAM_TOKEN)
 dp = Dispatcher()
 
 # basic in-memory storage to keep track of driver's last location
@@ -21,7 +22,6 @@ user_locations = {}
 async def cmd_start(message: types.Message):
     kb = [
         [types.KeyboardButton(text="📍 Share My Location", request_location=True)],
-        # CHANGED: Updated button text to include SOS for safety requirements
         [types.KeyboardButton(text="⚠️ SOS / Issue"), types.KeyboardButton(text="✅ Arrived")]
     ]
     keyboard = types.ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
@@ -87,7 +87,7 @@ async def handle_photo(message: types.Message):
     except Exception as e:
          await message.answer("Error connecting to server.")
 
-# NEW: safety feature - handling emergency button
+# safety feature - handling emergency button
 @dp.message(F.text == "⚠️ SOS / Issue")
 async def handle_emergency(message: types.Message):
     tg_id = message.from_user.id

@@ -2,11 +2,12 @@ from flask import Flask, render_template, request, jsonify
 from flask_sqlalchemy import SQLAlchemy
 from datetime import datetime
 import os
+import config # Importing our centralized configuration
 
 app = Flask(__name__)
 
-# database setup
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///orienttrack.db'
+# database setup using config
+app.config['SQLALCHEMY_DATABASE_URI'] = config.SQLALCHEMY_DATABASE_URI
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
 
@@ -108,9 +109,8 @@ def get_drivers():
         if d.last_lat and d.last_lng:
             current_status = d.status
             
-            # Safety Timer Logic: check if connection is lost for > 5 minutes (300 seconds)
-            if d.last_update and (now - d.last_update).total_seconds() > 300:
-                # Don't trigger warning if the driver has already arrived at the anchor
+            # Safety Timer Logic: use timeout variable from config
+            if d.last_update and (now - d.last_update).total_seconds() > config.SAFETY_TIMEOUT_SECONDS:
                 if current_status != 'At Anchor':
                     current_status = 'Warning (Lost Signal)'
 
@@ -127,7 +127,6 @@ def get_drivers():
 # api to fetch the full breadcrumb trail for a specific driver
 @app.route('/api/get_route/<int:driver_id>', methods=['GET'])
 def get_route(driver_id):
-    # fetch all points ordered by time
     points = RoutePoint.query.filter_by(driver_id=driver_id).order_by(RoutePoint.timestamp.asc()).all()
     result = []
     for p in points:

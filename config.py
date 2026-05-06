@@ -1,0 +1,17 @@
+import os
+
+# Server settings
+SERVER_HOST = "127.0.0.1"
+SERVER_PORT = 5000
+SERVER_URL = f"http://{SERVER_HOST}:{SERVER_PORT}"
+
+# Database settings
+BASE_DIR = os.path.abspath(os.path.dirname(__file__))
+SQLALCHEMY_DATABASE_URI = 'sqlite:///' + os.path.join(BASE_DIR, 'orienttrack.db')
+
+# Bot settings
+# In a real project, use environment variables here
+TELEGRAM_TOKEN = "YOUR_BOT_TOKEN_HERE"
+
+# Safety settings
+SAFETY_TIMEOUT_SECONDS = 300 # 5 minutes
