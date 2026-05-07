@@ -2,7 +2,15 @@ from flask import Flask, render_template, request, jsonify
 from flask_sqlalchemy import SQLAlchemy
 from datetime import datetime
 import os
-import config # Importing our centralized configuration
+import config # importing our centralized configuration
+import logging # importing the logging library for server monitoring
+
+# setup logging to a file
+logging.basicConfig(
+    filename='system.log',
+    level=logging.INFO,
+    format='%(asctime)s %(levelname)s: %(message)s'
+)
 
 app = Flask(__name__)
 
@@ -46,115 +54,140 @@ with app.app_context():
 # endpoint to receive regular location updates
 @app.route('/api/update_location', methods=['POST'])
 def update_location():
-    data = request.json
-    if not data:
-        return jsonify({"error": "no data"}), 400
-    
-    tg_id = str(data.get('telegram_id'))
-    lat = data.get('lat')
-    lng = data.get('lng')
-    
-    driver = Driver.query.filter_by(telegram_id=tg_id).first()
-    if not driver:
-        driver = Driver(telegram_id=tg_id, name=f"User {tg_id[-4:]}")
-        db.session.add(driver)
-        db.session.flush() 
-    
-    driver.last_lat = lat
-    driver.last_lng = lng
-    driver.last_update = datetime.utcnow()
-    driver.status = 'Active'
-    
-    new_point = RoutePoint(driver_id=driver.id, lat=lat, lng=lng)
-    db.session.add(new_point)
-    db.session.commit()
-    
-    return jsonify({"status": "ok"}), 200
+    try:
+        data = request.json
+        if not data:
+            return jsonify({"error": "no data"}), 400
+        
+        tg_id = str(data.get('telegram_id'))
+        lat = data.get('lat')
+        lng = data.get('lng')
+        
+        driver = Driver.query.filter_by(telegram_id=tg_id).first()
+        if not driver:
+            driver = Driver(telegram_id=tg_id, name=f"User {tg_id[-4:]}")
+            db.session.add(driver)
+            db.session.flush() 
+        
+        driver.last_lat = lat
+        driver.last_lng = lng
+        driver.last_update = datetime.utcnow()
+        driver.status = 'Active'
+        
+        new_point = RoutePoint(driver_id=driver.id, lat=lat, lng=lng)
+        db.session.add(new_point)
+        db.session.commit()
+        
+        # log successful update
+        logging.info(f"Location update successful for driver ID: {tg_id}")
+        return jsonify({"status": "ok"}), 200
+    except Exception as e:
+        # log errors if database or payload fails
+        logging.error(f"Error in update_location: {e}")
+        return jsonify({"error": "Internal server error"}), 500
 
 # endpoint to save visual anchors
 @app.route('/api/add_anchor', methods=['POST'])
 def add_anchor():
-    data = request.json
-    if not data:
-        return jsonify({"error": "no data"}), 400
+    try:
+        data = request.json
+        if not data:
+            return jsonify({"error": "no data"}), 400
+            
+        tg_id = str(data.get('telegram_id'))
+        driver = Driver.query.filter_by(telegram_id=tg_id).first()
         
-    tg_id = str(data.get('telegram_id'))
-    driver = Driver.query.filter_by(telegram_id=tg_id).first()
-    
-    if not driver:
-        return jsonify({"error": "driver not found"}), 404
+        if not driver:
+            return jsonify({"error": "driver not found"}), 404
+            
+        anchor = AnchorPoint(
+            driver_id=driver.id,
+            lat=data.get('lat'),
+            lng=data.get('lng'),
+            photo_id=data.get('photo_id'),
+            note=data.get('note', 'Arrived at anchor')
+        )
         
-    anchor = AnchorPoint(
-        driver_id=driver.id,
-        lat=data.get('lat'),
-        lng=data.get('lng'),
-        photo_id=data.get('photo_id'),
-        note=data.get('note', 'Arrived at anchor')
-    )
-    
-    db.session.add(anchor)
-    driver.status = 'At Anchor'
-    db.session.commit()
-    
-    return jsonify({"status": "anchor saved"}), 200
+        db.session.add(anchor)
+        driver.status = 'At Anchor'
+        db.session.commit()
+        
+        logging.info(f"Anchor successfully saved for driver ID: {tg_id}")
+        return jsonify({"status": "anchor saved"}), 200
+    except Exception as e:
+        logging.error(f"Error in add_anchor: {e}")
+        return jsonify({"error": "Internal server error"}), 500
 
 # api for the frontend dashboard to fetch active drivers
 @app.route('/api/get_drivers', methods=['GET'])
 def get_drivers():
-    drivers = Driver.query.all()
-    result = []
-    now = datetime.utcnow() # get current time for safety check
-    
-    for d in drivers:
-        if d.last_lat and d.last_lng:
-            current_status = d.status
-            
-            # Safety Timer Logic: use timeout variable from config
-            if d.last_update and (now - d.last_update).total_seconds() > config.SAFETY_TIMEOUT_SECONDS:
-                if current_status != 'At Anchor':
-                    current_status = 'Warning (Lost Signal)'
+    try:
+        drivers = Driver.query.all()
+        result = []
+        now = datetime.utcnow() # get current time for safety check
+        
+        for d in drivers:
+            if d.last_lat and d.last_lng:
+                current_status = d.status
+                
+                # safety timer logic: use timeout variable from config
+                if d.last_update and (now - d.last_update).total_seconds() > config.SAFETY_TIMEOUT_SECONDS:
+                    if current_status != 'At Anchor':
+                        current_status = 'Warning (Lost Signal)'
 
-            result.append({
-                "id": d.id,
-                "name": d.name,
-                "status": current_status,
-                "lat": d.last_lat,
-                "lng": d.last_lng,
-                "last_update": d.last_update.isoformat() if d.last_update else None
-            })
-    return jsonify(result), 200
+                result.append({
+                    "id": d.id,
+                    "name": d.name,
+                    "status": current_status,
+                    "lat": d.last_lat,
+                    "lng": d.last_lng,
+                    "last_update": d.last_update.isoformat() if d.last_update else None
+                })
+        return jsonify(result), 200
+    except Exception as e:
+        logging.error(f"Error fetching drivers: {e}")
+        return jsonify({"error": "Failed to fetch drivers"}), 500
 
 # api to fetch the full breadcrumb trail for a specific driver
 @app.route('/api/get_route/<int:driver_id>', methods=['GET'])
 def get_route(driver_id):
-    points = RoutePoint.query.filter_by(driver_id=driver_id).order_by(RoutePoint.timestamp.asc()).all()
-    result = []
-    for p in points:
-        result.append({
-            "lat": p.lat,
-            "lng": p.lng,
-            "time": p.timestamp.isoformat()
-        })
-    return jsonify(result), 200
+    try:
+        points = RoutePoint.query.filter_by(driver_id=driver_id).order_by(RoutePoint.timestamp.asc()).all()
+        result = []
+        for p in points:
+            result.append({
+                "lat": p.lat,
+                "lng": p.lng,
+                "time": p.timestamp.isoformat()
+            })
+        return jsonify(result), 200
+    except Exception as e:
+        logging.error(f"Error fetching route for driver {driver_id}: {e}")
+        return jsonify([]), 500
 
 # api to fetch visual anchors for the map
 @app.route('/api/get_anchors', methods=['GET'])
 def get_anchors():
-    anchors = AnchorPoint.query.all()
-    result = []
-    for a in anchors:
-        result.append({
-            "id": a.id,
-            "driver_id": a.driver_id,
-            "lat": a.lat,
-            "lng": a.lng,
-            "note": a.note
-        })
-    return jsonify(result), 200
+    try:
+        anchors = AnchorPoint.query.all()
+        result = []
+        for a in anchors:
+            result.append({
+                "id": a.id,
+                "driver_id": a.driver_id,
+                "lat": a.lat,
+                "lng": a.lng,
+                "note": a.note
+            })
+        return jsonify(result), 200
+    except Exception as e:
+        logging.error(f"Error fetching anchors: {e}")
+        return jsonify([]), 500
 
 @app.route('/')
 def index():
     return render_template('index.html')
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    # now using port from config
+    app.run(debug=True, port=config.SERVER_PORT)
