@@ -86,6 +86,22 @@ def update_location():
         logging.error(f"Error in update_location: {e}")
         return jsonify({"error": "Internal server error"}), 500
 
+# check status for the bot command /status
+@app.route('/api/check_status/<string:tg_id>', methods=['GET'])
+def check_status(tg_id):
+    try:
+        driver = Driver.query.filter_by(telegram_id=tg_id).first()
+        if not driver:
+            return jsonify({"status": "Unknown", "message": "Driver not registered"}), 404
+        
+        return jsonify({
+            "status": driver.status,
+            "last_update": driver.last_update.isoformat() if driver.last_update else None
+        }), 200
+    except Exception as e:
+        logging.error(f"Error checking status for {tg_id}: {e}")
+        return jsonify({"error": "server error"}), 500
+
 # endpoint to save visual anchors
 @app.route('/api/add_anchor', methods=['POST'])
 def add_anchor():
