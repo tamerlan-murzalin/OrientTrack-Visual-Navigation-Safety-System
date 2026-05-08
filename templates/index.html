@@ -176,12 +176,18 @@
                 .then(response => response.json())
                 .then(data => {
                     data.forEach(anchor => {
+                        var popupHtml = `<b>Visual Anchor</b><br>${anchor.note}`;
+                        // If the anchor has a photo, embed it in the popup
+                        if (anchor.photo_id) {
+                            popupHtml += `<br><img src="/api/get_photo/${anchor.photo_id}" style="width:100%; margin-top:5px; border-radius:4px;">`;
+                        }
+                        
                         L.circleMarker([anchor.lat, anchor.lng], {
                             color: '#dc3545',
                             fillColor: '#dc3545',
                             fillOpacity: 0.7,
                             radius: 7
-                        }).addTo(map).bindPopup(`<b>Visual Anchor</b><br>${anchor.note}`);
+                        }).addTo(map).bindPopup(popupHtml, {maxWidth: 220});
                     });
                 });
         }

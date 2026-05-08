@@ -1,9 +1,10 @@
-from flask import Flask, render_template, request, jsonify
+from flask import Flask, render_template, request, jsonify, redirect
 from flask_sqlalchemy import SQLAlchemy
 from datetime import datetime
 import os
 import config # importing our centralized configuration
 import logging # importing the logging library for server monitoring
+import requests # required to fetch photos from Telegram API
 
 # setup logging to a file
 logging.basicConfig(
@@ -193,12 +194,27 @@ def get_anchors():
                 "driver_id": a.driver_id,
                 "lat": a.lat,
                 "lng": a.lng,
-                "note": a.note
+                "note": a.note,
+                "photo_id": a.photo_id
             })
         return jsonify(result), 200
     except Exception as e:
         logging.error(f"Error fetching anchors: {e}")
         return jsonify([]), 500
+
+# endpoint to fetch and proxy photos from telegram for the dashboard
+@app.route('/api/get_photo/<string:photo_id>', methods=['GET'])
+def get_photo(photo_id):
+    try:
+        url = f"https://api.telegram.org/bot{config.TELEGRAM_TOKEN}/getFile?file_id={photo_id}"
+        resp = requests.get(url).json()
+        if resp.get("ok"):
+            file_path = resp["result"]["file_path"]
+            return redirect(f"https://api.telegram.org/file/bot{config.TELEGRAM_TOKEN}/{file_path}")
+        return jsonify({"error": "Photo not found"}), 404
+    except Exception as e:
+        logging.error(f"Error fetching photo {photo_id}: {e}")
+        return jsonify({"error": "Internal server error"}), 500
 
 @app.route('/')
 def index():
