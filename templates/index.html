@@ -59,6 +59,11 @@
             border: 2px solid #ddd;
             border-radius: 8px;
         }
+
+        .filters { margin-bottom: 15px; display: flex; gap: 5px; flex-wrap: wrap; }
+        .filter-btn { padding: 5px 10px; border: 1px solid #ddd; border-radius: 4px; background: white; cursor: pointer; font-size: 0.85em; transition: 0.2s; }
+        .filter-btn.active { background: #007bff; color: white; border-color: #007bff; }
+        .filter-btn:hover:not(.active) { background: #f0f8ff; }
     </style>
 </head>
 <body>
@@ -70,6 +75,14 @@
     <div class="main-content">
         <div class="sidebar">
             <h3 style="margin-top: 0;">Fleet Monitoring</h3>
+
+            <div class="filters">
+                <button class="filter-btn active" onclick="setFilter('All', this)">All</button>
+                <button class="filter-btn" onclick="setFilter('Active', this)">Active</button>
+                <button class="filter-btn" onclick="setFilter('Warning', this)">Warnings</button>
+                <button class="filter-btn" onclick="setFilter('At Anchor', this)">At Anchor</button>
+            </div>
+
             <div id="driver-list">
                 <p>Connecting to fleet...</p>
             </div>
@@ -89,6 +102,14 @@
 
         var driverMarkers = {};
         var driverRoutes = {}; 
+        var currentFilter = 'All';
+
+        function setFilter(filterType, btnElement) {
+            currentFilter = filterType;
+            document.querySelectorAll('.filter-btn').forEach(btn => btn.classList.remove('active'));
+            btnElement.classList.add('active');
+            fetchDriverLocations();
+        }
 
         function drawRoute(driverId) {
             fetch(`/api/get_route/${driverId}`)
@@ -120,13 +141,20 @@
                         
                         var statusClass = driver.status.includes('Warning') ? 'status-warning' : 'status-active';
 
-                        listHtml += `
-                            <div class="driver-card" onclick="drawRoute(${driver.id}); map.setView([${driver.lat}, ${driver.lng}], 15);">
-                                <strong>${driver.name}</strong><br>
-                                <span class="last-seen">Last signal: ${timeText}</span><br>
-                                Status: <span class="${statusClass}">${driver.status}</span>
-                            </div>
-                        `;
+                        var showDriver = false;
+                        if (currentFilter === 'All') showDriver = true;
+                        else if (currentFilter === 'Warning' && driver.status.includes('Warning')) showDriver = true;
+                        else if (currentFilter === driver.status) showDriver = true;
+
+                        if (showDriver) {
+                            listHtml += `
+                                <div class="driver-card" onclick="drawRoute(${driver.id}); map.setView([${driver.lat}, ${driver.lng}], 15);">
+                                    <strong>${driver.name}</strong><br>
+                                    <span class="last-seen">Last signal: ${timeText}</span><br>
+                                    Status: <span class="${statusClass}">${driver.status}</span>
+                                </div>
+                            `;
+                        }
 
                         if (driverMarkers[driver.id]) {
                             driverMarkers[driver.id].setLatLng([driver.lat, driver.lng]);
