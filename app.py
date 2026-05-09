@@ -103,6 +103,29 @@ def check_status(tg_id):
         logging.error(f"Error checking status for {tg_id}: {e}")
         return jsonify({"error": "server error"}), 500
 
+# endpoint to trigger SOS emergency mode
+@app.route('/api/emergency', methods=['POST'])
+def emergency():
+    try:
+        data = request.json
+        if not data:
+            return jsonify({"error": "no data"}), 400
+            
+        tg_id = str(data.get('telegram_id'))
+        driver = Driver.query.filter_by(telegram_id=tg_id).first()
+        
+        if driver:
+            driver.status = 'SOS / Emergency'
+            driver.last_update = datetime.utcnow()
+            db.session.commit()
+            logging.warning(f"EMERGENCY TRIGGERED FOR DRIVER ID: {tg_id}")
+            return jsonify({"status": "emergency registered"}), 200
+        
+        return jsonify({"error": "driver not found"}), 404
+    except Exception as e:
+        logging.error(f"Error in emergency endpoint: {e}")
+        return jsonify({"error": "Internal server error"}), 500
+
 # endpoint to save visual anchors
 @app.route('/api/add_anchor', methods=['POST'])
 def add_anchor():
@@ -149,7 +172,7 @@ def get_drivers():
                 
                 # safety timer logic: use timeout variable from config
                 if d.last_update and (now - d.last_update).total_seconds() > config.SAFETY_TIMEOUT_SECONDS:
-                    if current_status != 'At Anchor':
+                    if current_status != 'At Anchor' and current_status != 'SOS / Emergency':
                         current_status = 'Warning (Lost Signal)'
 
                 result.append({

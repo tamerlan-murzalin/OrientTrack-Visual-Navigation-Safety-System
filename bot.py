@@ -8,6 +8,8 @@ import config # Importing our centralized configuration
 # URLs are now built dynamically from config
 SERVER_URL = f"{config.SERVER_URL}/api/update_location"
 ANCHOR_URL = f"{config.SERVER_URL}/api/add_anchor"
+STATUS_URL = f"{config.SERVER_URL}/api/check_status"
+EMERGENCY_URL = f"{config.SERVER_URL}/api/emergency"
 
 logging.basicConfig(level=logging.INFO)
 
@@ -25,7 +27,22 @@ async def cmd_start(message: types.Message):
         [types.KeyboardButton(text="⚠️ SOS / Issue"), types.KeyboardButton(text="✅ Arrived")]
     ]
     keyboard = types.ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
-    await message.answer("OrientTrack active. Please share your location first, then you can send photos of anchors.", reply_markup=keyboard)
+    await message.answer("OrientTrack active. Use /status to check your connection or buttons to update location.", reply_markup=keyboard)
+
+# handling /status command to check server connection
+@dp.message(Command("status"))
+async def cmd_status(message: types.Message):
+    tg_id = message.from_user.id
+    try:
+        # trying to reach our server
+        resp = requests.get(f"{STATUS_URL}/{tg_id}", timeout=5)
+        if resp.status_code == 200:
+            data = resp.json()
+            await message.answer(f"✅ Connection OK.\nStatus: {data['status']}\nLast update: {data['last_update']}")
+        else:
+            await message.answer("❌ Server reached but you are not registered yet. Please share location first.")
+    except Exception as e:
+        await message.answer("⚠️ Connection to server failed. You might be in a dead zone.")
 
 # handling location updates
 @dp.message(F.location)
@@ -47,7 +64,6 @@ async def handle_location(message: types.Message):
         resp = requests.post(SERVER_URL, json=payload)
         if resp.status_code == 200:
             print(f"Location updated for {tg_id}")
-            # tell the driver they can now send a photo
             await message.answer("Location updated. You can now send a photo of the gate or container to set a visual anchor.")
         else:
             print("Server error during update")
@@ -59,12 +75,10 @@ async def handle_location(message: types.Message):
 async def handle_photo(message: types.Message):
     tg_id = message.from_user.id
     
-    # check if we know where they are
     if tg_id not in user_locations:
         await message.answer("Please share your location first before sending an anchor photo.")
         return
         
-    # get the highest resolution photo file_id
     photo_id = message.photo[-1].file_id
     lat = user_locations[tg_id]["lat"]
     lng = user_locations[tg_id]["lng"]
@@ -74,7 +88,6 @@ async def handle_photo(message: types.Message):
         "lat": lat,
         "lng": lng,
         "photo_id": photo_id,
-        # if driver added text to photo, save it as a note
         "note": message.caption or "Visual anchor saved"
     }
     
@@ -91,7 +104,14 @@ async def handle_photo(message: types.Message):
 @dp.message(F.text == "⚠️ SOS / Issue")
 async def handle_emergency(message: types.Message):
     tg_id = message.from_user.id
-    # in a real system this would hit a specific /api/emergency endpoint
+    
+    # explicitly hitting the emergency endpoint
+    payload = {"telegram_id": tg_id}
+    try:
+        requests.post(EMERGENCY_URL, json=payload)
+    except Exception as e:
+        print(f"Failed to alert server: {e}")
+        
     await message.answer("EMERGENCY SIGNAL SENT to dispatcher. Please stay calm, we are recording your last known location.")
     print(f"!!! EMERGENCY ALERT TRIGGERED BY USER {tg_id} !!!")
 

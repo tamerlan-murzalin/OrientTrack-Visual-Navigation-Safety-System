@@ -139,11 +139,14 @@
                         var diffMins = Math.floor(diffMs / 60000);
                         var timeText = diffMins > 0 ? `${diffMins} min ago` : "just now";
                         
-                        var statusClass = driver.status.includes('Warning') ? 'status-warning' : 'status-active';
+                        var statusClass = 'status-active';
+                        if (driver.status.includes('Warning') || driver.status.includes('SOS')) {
+                            statusClass = 'status-warning';
+                        }
 
                         var showDriver = false;
                         if (currentFilter === 'All') showDriver = true;
-                        else if (currentFilter === 'Warning' && driver.status.includes('Warning')) showDriver = true;
+                        else if (currentFilter === 'Warning' && (driver.status.includes('Warning') || driver.status.includes('SOS'))) showDriver = true;
                         else if (currentFilter === driver.status) showDriver = true;
 
                         if (showDriver) {
