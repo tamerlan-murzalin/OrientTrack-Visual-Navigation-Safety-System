@@ -69,7 +69,10 @@
 <body>
     <div class="header">
         <h1 style="margin: 0;">OrientTrack Monitoring Panel</h1>
-        <span id="system-status" style="background: #28a745; color: white; padding: 5px 15px; border-radius: 20px; font-weight: bold;">System Live</span>
+        <div style="text-align: right;">
+            <span id="system-status" style="background: #28a745; color: white; padding: 5px 15px; border-radius: 20px; font-weight: bold;">System Live</span>
+            <div id="last-update-time" style="font-size: 0.85em; color: #6c757d; margin-top: 8px;">Last sync: --:--:--</div>
+        </div>
     </div>
     
     <div class="main-content">
@@ -129,6 +132,13 @@
             fetch('/api/get_drivers')
                 .then(response => response.json())
                 .then(data => {
+                    // Update system pulse timer
+                    document.getElementById('last-update-time').innerText = "Last sync: " + new Date().toLocaleTimeString();
+                    
+                    // Reset status to green in case connection was restored
+                    document.getElementById('system-status').innerText = "System Live";
+                    document.getElementById('system-status').style.background = "#28a745";
+
                     var listHtml = "";
                     var now = new Date();
                     
@@ -170,7 +180,13 @@
                         drawRoute(driver.id);
                     });
                     
-                    document.getElementById('driver-list').innerHTML = listHtml || "<p>No drivers active.</p>";
+                    document.getElementById('driver-list').innerHTML = listHtml || "<p>No drivers match filter.</p>";
+                })
+                .catch(err => {
+                    // Handle case when dispatcher loses connection to the server
+                    document.getElementById('system-status').innerText = "Offline";
+                    document.getElementById('system-status').style.background = "#dc3545";
+                    console.error("Connection error:", err);
                 });
         }
 
