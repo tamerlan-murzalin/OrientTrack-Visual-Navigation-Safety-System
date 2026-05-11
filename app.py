@@ -168,6 +168,10 @@ def get_drivers():
         
         for d in drivers:
             if d.last_lat and d.last_lng:
+                # skip drivers who haven't updated in over 12 hours (43200 seconds)
+                if d.last_update and (now - d.last_update).total_seconds() > 43200:
+                    continue
+
                 current_status = d.status
                 
                 # safety timer logic: use timeout variable from config
