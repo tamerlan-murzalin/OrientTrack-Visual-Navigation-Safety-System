@@ -115,6 +115,11 @@ async def handle_emergency(message: types.Message):
     await message.answer("EMERGENCY SIGNAL SENT to dispatcher. Please stay calm, we are recording your last known location.")
     print(f"!!! EMERGENCY ALERT TRIGGERED BY USER {tg_id} !!!")
 
+# fallback handler for any unrecognized text or media
+@dp.message()
+async def handle_unrecognized(message: types.Message):
+    await message.answer("Command not recognized. Please share your location, send a photo, or use the menu buttons.")
+
 async def main():
     print("Bot is running...")
     await dp.start_polling(bot)
