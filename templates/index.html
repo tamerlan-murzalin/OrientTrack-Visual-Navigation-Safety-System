@@ -69,9 +69,12 @@
 <body>
     <div class="header">
         <h1 style="margin: 0;">OrientTrack Monitoring Panel</h1>
-        <div style="text-align: right;">
-            <span id="system-status" style="background: #28a745; color: white; padding: 5px 15px; border-radius: 20px; font-weight: bold;">System Live</span>
-            <div id="last-update-time" style="font-size: 0.85em; color: #6c757d; margin-top: 8px;">Last sync: --:--:--</div>
+        <div style="display: flex; gap: 15px; align-items: center;">
+            <button onclick="fitMapToFleet()" style="height: 35px; padding: 0 15px; border: 1px solid #ccc; border-radius: 4px; background: white; cursor: pointer; font-weight: bold;">🌍 Fit Map</button>
+            <div style="text-align: right;">
+                <span id="system-status" style="background: #28a745; color: white; padding: 5px 15px; border-radius: 20px; font-weight: bold;">System Live</span>
+                <div id="last-update-time" style="font-size: 0.85em; color: #6c757d; margin-top: 8px;">Last sync: --:--:--</div>
+            </div>
         </div>
     </div>
     
@@ -209,6 +212,16 @@
                         }).addTo(map).bindPopup(popupHtml, {maxWidth: 220});
                     });
                 });
+        }
+
+        function fitMapToFleet() {
+            var bounds = [];
+            for (var id in driverMarkers) {
+                bounds.push(driverMarkers[id].getLatLng());
+            }
+            if (bounds.length > 0) {
+                map.fitBounds(bounds, {padding: [50, 50]});
+            }
         }
 
         fetchDriverLocations();
