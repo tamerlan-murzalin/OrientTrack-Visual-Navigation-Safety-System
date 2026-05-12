@@ -10,8 +10,7 @@ BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 SQLALCHEMY_DATABASE_URI = 'sqlite:///' + os.path.join(BASE_DIR, 'orienttrack.db')
 
 # Bot settings
-# In a real project, use environment variables here
-TELEGRAM_TOKEN = "YOUR_BOT_TOKEN_HERE"
+TELEGRAM_TOKEN = "BOT_TOKEN_HERE"
 
 # Safety settings
 SAFETY_TIMEOUT_SECONDS = 300 # 5 minutes

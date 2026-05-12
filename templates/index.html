@@ -117,7 +117,7 @@
             fetchDriverLocations();
         }
 
-        function drawRoute(driverId) {
+        function drawRoute(driverId, status) {
             fetch(`/api/get_route/${driverId}`)
                 .then(response => response.json())
                 .then(data => {
@@ -125,7 +125,11 @@
                         map.removeLayer(driverRoutes[driverId]);
                     }
                     var latlngs = data.map(point => [point.lat, point.lng]);
-                    var polyline = L.polyline(latlngs, {color: '#007bff', weight: 4, opacity: 0.6}).addTo(map);
+                    
+                    // Route becomes red if driver is in Warning or SOS state
+                    var routeColor = (status && (status.includes('Warning') || status.includes('SOS'))) ? '#dc3545' : '#007bff';
+                    
+                    var polyline = L.polyline(latlngs, {color: routeColor, weight: 4, opacity: 0.6}).addTo(map);
                     driverRoutes[driverId] = polyline;
                 })
                 .catch(err => console.error("Error drawing route:", err));
@@ -164,7 +168,7 @@
 
                         if (showDriver) {
                             listHtml += `
-                                <div class="driver-card" onclick="drawRoute(${driver.id}); map.setView([${driver.lat}, ${driver.lng}], 15);">
+                                <div class="driver-card" onclick="drawRoute(${driver.id}, '${driver.status}'); map.setView([${driver.lat}, ${driver.lng}], 15);">
                                     <strong>${driver.name}</strong><br>
                                     <span class="last-seen">Last signal: ${timeText}</span><br>
                                     Status: <span class="${statusClass}">${driver.status}</span>
@@ -180,7 +184,7 @@
                             driverMarkers[driver.id] = m;
                         }
                         
-                        drawRoute(driver.id);
+                        drawRoute(driver.id, driver.status);
                     });
                     
                     document.getElementById('driver-list').innerHTML = listHtml || "<p>No drivers match filter.</p>";
