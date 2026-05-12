@@ -10,6 +10,7 @@ SERVER_URL = f"{config.SERVER_URL}/api/update_location"
 ANCHOR_URL = f"{config.SERVER_URL}/api/add_anchor"
 STATUS_URL = f"{config.SERVER_URL}/api/check_status"
 EMERGENCY_URL = f"{config.SERVER_URL}/api/emergency"
+SETNAME_URL = f"{config.SERVER_URL}/api/update_name"
 
 logging.basicConfig(level=logging.INFO)
 
@@ -43,6 +44,27 @@ async def cmd_status(message: types.Message):
             await message.answer("❌ Server reached but you are not registered yet. Please share location first.")
     except Exception as e:
         await message.answer("⚠️ Connection to server failed. You might be in a dead zone.")
+
+@dp.message(Command("setname"))
+async def cmd_setname(message: types.Message):
+    tg_id = message.from_user.id
+    parts = message.text.split(maxsplit=1)
+    
+    if len(parts) < 2:
+        await message.answer("Please provide a name or vehicle number. Example: /setname Truck 55")
+        return
+        
+    new_name = parts[1]
+    payload = {"telegram_id": tg_id, "name": new_name}
+    
+    try:
+        resp = requests.post(SETNAME_URL, json=payload)
+        if resp.status_code == 200:
+            await message.answer(f"✅ Name successfully updated to: {new_name}")
+        else:
+            await message.answer("❌ Please share your location first to register in the system.")
+    except Exception as e:
+        await message.answer("⚠️ Connection to server failed.")
 
 # handling location updates
 @dp.message(F.location)

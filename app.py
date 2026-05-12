@@ -103,6 +103,30 @@ def check_status(tg_id):
         logging.error(f"Error checking status for {tg_id}: {e}")
         return jsonify({"error": "server error"}), 500
 
+# endpoint to update driver name/vehicle number
+@app.route('/api/update_name', methods=['POST'])
+def update_name():
+    try:
+        data = request.json
+        if not data:
+            return jsonify({"error": "no data"}), 400
+            
+        tg_id = str(data.get('telegram_id'))
+        new_name = data.get('name')
+        
+        driver = Driver.query.filter_by(telegram_id=tg_id).first()
+        if not driver:
+            return jsonify({"error": "driver not found"}), 404
+            
+        driver.name = new_name
+        db.session.commit()
+        
+        logging.info(f"Name updated to {new_name} for driver ID: {tg_id}")
+        return jsonify({"status": "name updated"}), 200
+    except Exception as e:
+        logging.error(f"Error in update_name: {e}")
+        return jsonify({"error": "Internal server error"}), 500
+
 # endpoint to trigger SOS emergency mode
 @app.route('/api/emergency', methods=['POST'])
 def emergency():
