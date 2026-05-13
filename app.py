@@ -150,6 +150,31 @@ def emergency():
         logging.error(f"Error in emergency endpoint: {e}")
         return jsonify({"error": "Internal server error"}), 500
 
+# endpoint to reset driver route (start new shift)
+@app.route('/api/reset_route', methods=['POST'])
+def reset_route():
+    try:
+        data = request.json
+        if not data:
+            return jsonify({"error": "no data"}), 400
+            
+        tg_id = str(data.get('telegram_id'))
+        driver = Driver.query.filter_by(telegram_id=tg_id).first()
+        
+        if not driver:
+            return jsonify({"error": "driver not found"}), 404
+            
+        # delete all route points to clear the map for a new shift
+        RoutePoint.query.filter_by(driver_id=driver.id).delete()
+        driver.status = 'Active'
+        db.session.commit()
+        
+        logging.info(f"Route history reset for driver ID: {tg_id}")
+        return jsonify({"status": "route reset"}), 200
+    except Exception as e:
+        logging.error(f"Error in reset_route: {e}")
+        return jsonify({"error": "Internal server error"}), 500
+
 # endpoint to save visual anchors
 @app.route('/api/add_anchor', methods=['POST'])
 def add_anchor():

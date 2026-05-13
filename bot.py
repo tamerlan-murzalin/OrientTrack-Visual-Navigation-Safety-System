@@ -11,6 +11,7 @@ ANCHOR_URL = f"{config.SERVER_URL}/api/add_anchor"
 STATUS_URL = f"{config.SERVER_URL}/api/check_status"
 EMERGENCY_URL = f"{config.SERVER_URL}/api/emergency"
 SETNAME_URL = f"{config.SERVER_URL}/api/update_name"
+RESET_URL = f"{config.SERVER_URL}/api/reset_route"
 
 logging.basicConfig(level=logging.INFO)
 
@@ -25,10 +26,11 @@ user_locations = {}
 async def cmd_start(message: types.Message):
     kb = [
         [types.KeyboardButton(text="📍 Share My Location", request_location=True)],
-        [types.KeyboardButton(text="⚠️ SOS / Issue"), types.KeyboardButton(text="✅ Arrived")]
+        [types.KeyboardButton(text="⚠️ SOS / Issue"), types.KeyboardButton(text="✅ Arrived")],
+        [types.KeyboardButton(text="🏁 Reset Shift")]
     ]
     keyboard = types.ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
-    await message.answer("OrientTrack active. Use /status to check your connection or buttons to update location.", reply_markup=keyboard)
+    await message.answer("OrientTrack active. Use /status to check connection, or the buttons below for location and shift management.", reply_markup=keyboard)
 
 # handling /status command to check server connection
 @dp.message(Command("status"))
@@ -65,6 +67,21 @@ async def cmd_setname(message: types.Message):
             await message.answer("❌ Please share your location first to register in the system.")
     except Exception as e:
         await message.answer("⚠️ Connection to server failed.")
+
+# handling shift reset request
+@dp.message(F.text == "🏁 Reset Shift")
+async def handle_reset(message: types.Message):
+    tg_id = message.from_user.id
+    payload = {"telegram_id": tg_id}
+    
+    try:
+        resp = requests.post(RESET_URL, json=payload)
+        if resp.status_code == 200:
+            await message.answer("✅ Shift history reset. Your route on the map has been cleared for a new trip.")
+        else:
+            await message.answer("❌ Failed to reset shift. Are you registered?")
+    except Exception as e:
+        await message.answer("⚠️ Error connecting to server.")
 
 # handling location updates
 @dp.message(F.location)
