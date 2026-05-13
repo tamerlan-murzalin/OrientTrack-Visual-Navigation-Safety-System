@@ -64,6 +64,9 @@
         .filter-btn { padding: 5px 10px; border: 1px solid #ddd; border-radius: 4px; background: white; cursor: pointer; font-size: 0.85em; transition: 0.2s; }
         .filter-btn.active { background: #007bff; color: white; border-color: #007bff; }
         .filter-btn:hover:not(.active) { background: #f0f8ff; }
+
+        /* Style for map marker tooltips */
+        .marker-tooltip { background: rgba(255, 255, 255, 0.9); border: 1px solid #ddd; border-radius: 4px; font-weight: bold; font-size: 0.8em; padding: 2px 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
     </style>
 </head>
 <body>
@@ -178,9 +181,16 @@
 
                         if (driverMarkers[driver.id]) {
                             driverMarkers[driver.id].setLatLng([driver.lat, driver.lng]);
+                            // Update popup and tooltip text dynamically
+                            driverMarkers[driver.id].getPopup().setContent(`<b>${driver.name}</b><br>Last signal: ${timeText}`);
+                            if (driverMarkers[driver.id].getTooltip()) {
+                                driverMarkers[driver.id].setTooltipContent(timeText);
+                            }
                         } else {
                             var m = L.marker([driver.lat, driver.lng]).addTo(map);
                             m.bindPopup(`<b>${driver.name}</b><br>Last signal: ${timeText}`);
+                            // Add permanent tooltip to show last seen time directly on the map
+                            m.bindTooltip(timeText, {permanent: true, direction: 'top', className: 'marker-tooltip', offset: [0, -15]});
                             driverMarkers[driver.id] = m;
                         }
                         
