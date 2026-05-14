@@ -190,7 +190,7 @@
 
                         if (showDriver) {
                             listHtml += `
-                                <div class="driver-card" onclick="drawRoute(${driver.id}, '${driver.status}'); map.setView([${driver.lat}, ${driver.lng}], 15);">
+                                <div class="driver-card" onclick="drawRoute(${driver.id}, '${driver.status}'); map.flyTo([${driver.lat}, ${driver.lng}], 15, {duration: 1.5});">
                                     <strong>${driver.name}</strong><br>
                                     <span class="last-seen">Last signal: ${timeText}</span><br>
                                     Status: <span class="${statusClass}">${driver.status}</span>
