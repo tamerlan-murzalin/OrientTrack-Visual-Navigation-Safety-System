@@ -67,6 +67,9 @@
 
         /* Style for map marker tooltips */
         .marker-tooltip { background: rgba(255, 255, 255, 0.9); border: 1px solid #ddd; border-radius: 4px; font-weight: bold; font-size: 0.8em; padding: 2px 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+        
+        /* Style for the new fleet summary counters */
+        .fleet-summary { margin-bottom: 15px; font-size: 0.9em; background: #f8f9fa; padding: 10px; border-radius: 4px; border: 1px solid #eee; display: flex; justify-content: space-between; }
     </style>
 </head>
 <body>
@@ -90,6 +93,12 @@
                 <button class="filter-btn" onclick="setFilter('Active', this)">Active</button>
                 <button class="filter-btn" onclick="setFilter('Warning', this)">Warnings</button>
                 <button class="filter-btn" onclick="setFilter('At Anchor', this)">At Anchor</button>
+            </div>
+
+            <div class="fleet-summary">
+                <span style="color: #28a745;"><b>Active:</b> <span id="count-active">0</span></span>
+                <span style="color: #dc3545;"><b>Warning:</b> <span id="count-warning">0</span></span>
+                <span style="color: #007bff;"><b>Anchor:</b> <span id="count-anchor">0</span></span>
             </div>
 
             <div id="driver-list">
@@ -152,6 +161,11 @@
                     var listHtml = "";
                     var now = new Date();
                     
+                    // Tracking counters for fleet summary
+                    var countActive = 0;
+                    var countWarning = 0;
+                    var countAnchor = 0;
+                    
                     data.forEach(driver => {
                         // Logic for relative time "Last Seen"
                         var lastUpdate = new Date(driver.last_update);
@@ -162,6 +176,11 @@
                         var statusClass = 'status-active';
                         if (driver.status.includes('Warning') || driver.status.includes('SOS')) {
                             statusClass = 'status-warning';
+                            countWarning++;
+                        } else if (driver.status.includes('Anchor')) {
+                            countAnchor++;
+                        } else {
+                            countActive++;
                         }
 
                         var showDriver = false;
@@ -196,6 +215,11 @@
                         
                         drawRoute(driver.id, driver.status);
                     });
+                    
+                    // Update the HTML summary counters
+                    document.getElementById('count-active').innerText = countActive;
+                    document.getElementById('count-warning').innerText = countWarning;
+                    document.getElementById('count-anchor').innerText = countAnchor;
                     
                     document.getElementById('driver-list').innerHTML = listHtml || "<p>No drivers match filter.</p>";
                 })
