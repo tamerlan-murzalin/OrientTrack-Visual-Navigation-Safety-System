@@ -48,6 +48,15 @@ class AnchorPoint(db.Model):
     note = db.Column(db.String(255))
     timestamp = db.Column(db.DateTime, default=datetime.utcnow)
 
+class ArchivedRoute(db.Model):
+    # stores historical routes after a shift reset for future analytics
+    id = db.Column(db.Integer, primary_key=True)
+    driver_id = db.Column(db.Integer, db.ForeignKey('driver.id'))
+    lat = db.Column(db.Float, nullable=False)
+    lng = db.Column(db.Float, nullable=False)
+    timestamp = db.Column(db.DateTime)
+    archived_at = db.Column(db.DateTime, default=datetime.utcnow)
+
 # init tables
 with app.app_context():
     db.create_all()
@@ -164,12 +173,18 @@ def reset_route():
         if not driver:
             return jsonify({"error": "driver not found"}), 404
             
-        # delete all route points to clear the map for a new shift
+        # archive current route points before clearing
+        current_points = RoutePoint.query.filter_by(driver_id=driver.id).all()
+        for p in current_points:
+            archive_point = ArchivedRoute(driver_id=p.driver_id, lat=p.lat, lng=p.lng, timestamp=p.timestamp)
+            db.session.add(archive_point)
+            
+        # delete all active route points to clear the map for a new shift
         RoutePoint.query.filter_by(driver_id=driver.id).delete()
         driver.status = 'Active'
         db.session.commit()
         
-        logging.info(f"Route history reset for driver ID: {tg_id}")
+        logging.info(f"Route history archived and reset for driver ID: {tg_id}")
         return jsonify({"status": "route reset"}), 200
     except Exception as e:
         logging.error(f"Error in reset_route: {e}")
