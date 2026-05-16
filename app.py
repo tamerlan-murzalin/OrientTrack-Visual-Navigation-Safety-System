@@ -1,10 +1,12 @@
-from flask import Flask, render_template, request, jsonify, redirect
+from flask import Flask, render_template, request, jsonify, redirect, Response
 from flask_sqlalchemy import SQLAlchemy
 from datetime import datetime
 import os
 import config # importing our centralized configuration
 import logging # importing the logging library for server monitoring
 import requests # required to fetch photos from Telegram API
+import csv
+import io
 
 # setup logging to a file
 logging.basicConfig(
@@ -305,6 +307,31 @@ def get_photo(photo_id):
         return jsonify({"error": "Photo not found"}), 404
     except Exception as e:
         logging.error(f"Error fetching photo {photo_id}: {e}")
+        return jsonify({"error": "Internal server error"}), 500
+
+# endpoint to export archived routes as CSV for analytics
+@app.route('/api/export_routes', methods=['GET'])
+def export_routes():
+    try:
+        si = io.StringIO()
+        cw = csv.writer(si)
+        cw.writerow(['driver_id', 'lat', 'lng', 'timestamp', 'archived_at'])
+        
+        records = ArchivedRoute.query.all()
+        for r in records:
+            cw.writerow([
+                r.driver_id, 
+                r.lat, 
+                r.lng, 
+                r.timestamp.isoformat() if r.timestamp else '', 
+                r.archived_at.isoformat() if r.archived_at else ''
+            ])
+            
+        output = Response(si.getvalue(), mimetype='text/csv')
+        output.headers["Content-Disposition"] = "attachment; filename=archived_routes.csv"
+        return output
+    except Exception as e:
+        logging.error(f"Error exporting routes: {e}")
         return jsonify({"error": "Internal server error"}), 500
 
 @app.route('/')
