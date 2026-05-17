@@ -70,6 +70,15 @@
         
         /* Style for the new fleet summary counters */
         .fleet-summary { margin-bottom: 15px; font-size: 0.9em; background: #f8f9fa; padding: 10px; border-radius: 4px; border: 1px solid #eee; display: flex; justify-content: space-between; }
+        
+        /* Mobile responsive design for tablets and phones */
+        @media (max-width: 768px) {
+            .main-content { flex-direction: column; }
+            .sidebar { width: auto; height: 350px; }
+            .map-container { height: 500px; }
+            .header { flex-direction: column; text-align: center; gap: 15px; }
+            .header > div { justify-content: center; flex-wrap: wrap; width: 100%; }
+        }
     </style>
 </head>
 <body>
