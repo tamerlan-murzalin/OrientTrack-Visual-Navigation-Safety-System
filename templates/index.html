@@ -35,6 +35,13 @@
             height: 650px;
             overflow-y: auto;
         }
+        
+        /* Custom Scrollbar for Sidebar */
+        .sidebar::-webkit-scrollbar { width: 6px; }
+        .sidebar::-webkit-scrollbar-track { background: #f1f1f1; border-radius: 4px; }
+        .sidebar::-webkit-scrollbar-thumb { background: #c1c1c1; border-radius: 4px; }
+        .sidebar::-webkit-scrollbar-thumb:hover { background: #a8a8a8; }
+
         .driver-card {
             padding: 12px;
             border-bottom: 1px solid #eee;
@@ -47,10 +54,20 @@
         .status-active { color: #28a745; font-weight: bold; }
         .status-warning { color: #dc3545; font-weight: bold; animation: blink 1s linear infinite; }
         
-        /* New style for the time display */
         .last-seen { font-size: 0.85em; color: #6c757d; font-style: italic; }
         
         @keyframes blink { 50% { opacity: 0.5; } }
+
+        /* System Status Badge Styles */
+        #system-status { padding: 5px 15px; border-radius: 20px; font-weight: bold; color: white; display: inline-block; transition: background 0.3s; }
+        .status-online { background: #28a745; animation: pulse-green 2s infinite; }
+        .status-offline { background: #dc3545; }
+        
+        @keyframes pulse-green {
+            0% { box-shadow: 0 0 0 0 rgba(40, 167, 69, 0.7); }
+            70% { box-shadow: 0 0 0 10px rgba(40, 167, 69, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(40, 167, 69, 0); }
+        }
 
         .map-container {
             flex-grow: 1;
@@ -65,13 +82,10 @@
         .filter-btn.active { background: #007bff; color: white; border-color: #007bff; }
         .filter-btn:hover:not(.active) { background: #f0f8ff; }
 
-        /* Style for map marker tooltips */
         .marker-tooltip { background: rgba(255, 255, 255, 0.9); border: 1px solid #ddd; border-radius: 4px; font-weight: bold; font-size: 0.8em; padding: 2px 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
         
-        /* Style for the new fleet summary counters */
         .fleet-summary { margin-bottom: 15px; font-size: 0.9em; background: #f8f9fa; padding: 10px; border-radius: 4px; border: 1px solid #eee; display: flex; justify-content: space-between; }
         
-        /* Mobile responsive design for tablets and phones */
         @media (max-width: 768px) {
             .main-content { flex-direction: column; }
             .sidebar { width: auto; height: 350px; }
@@ -88,7 +102,7 @@
             <button onclick="window.location.href='/api/export_routes'" style="height: 35px; padding: 0 15px; border: 1px solid #ccc; border-radius: 4px; background: white; cursor: pointer; font-weight: bold;">📥 Export CSV</button>
             <button onclick="fitMapToFleet()" style="height: 35px; padding: 0 15px; border: 1px solid #ccc; border-radius: 4px; background: white; cursor: pointer; font-weight: bold;">🌍 Fit Map</button>
             <div style="text-align: right;">
-                <span id="system-status" style="background: #28a745; color: white; padding: 5px 15px; border-radius: 20px; font-weight: bold;">System Live</span>
+                <span id="system-status" class="status-online">System Live</span>
                 <div id="last-update-time" style="font-size: 0.85em; color: #6c757d; margin-top: 8px;">Last sync: --:--:--</div>
             </div>
         </div>
@@ -166,7 +180,7 @@
                     
                     // Reset status to green in case connection was restored
                     document.getElementById('system-status').innerText = "System Live";
-                    document.getElementById('system-status').style.background = "#28a745";
+                    document.getElementById('system-status').className = "status-online";
 
                     var listHtml = "";
                     var now = new Date();
@@ -236,7 +250,7 @@
                 .catch(err => {
                     // Handle case when dispatcher loses connection to the server
                     document.getElementById('system-status').innerText = "Offline";
-                    document.getElementById('system-status').style.background = "#dc3545";
+                    document.getElementById('system-status').className = "status-offline";
                     console.error("Connection error:", err);
                 });
         }
