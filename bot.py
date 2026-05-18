@@ -1,6 +1,6 @@
 import logging
 import asyncio
-import requests
+import aiohttp
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 import config # Importing our centralized configuration
@@ -32,18 +32,18 @@ async def cmd_start(message: types.Message):
     keyboard = types.ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
     await message.answer("OrientTrack active. Use /status to check connection, or the buttons below for location and shift management.", reply_markup=keyboard)
 
-# handling /status command to check server connection
+# handling /status command to check server connection asynchronously
 @dp.message(Command("status"))
 async def cmd_status(message: types.Message):
     tg_id = message.from_user.id
     try:
-        # trying to reach our server
-        resp = requests.get(f"{STATUS_URL}/{tg_id}", timeout=5)
-        if resp.status_code == 200:
-            data = resp.json()
-            await message.answer(f"✅ Connection OK.\nStatus: {data['status']}\nLast update: {data['last_update']}")
-        else:
-            await message.answer("❌ Server reached but you are not registered yet. Please share location first.")
+        async with aiohttp.ClientSession() as session:
+            async with session.get(f"{STATUS_URL}/{tg_id}", timeout=5) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    await message.answer(f"✅ Connection OK.\nStatus: {data['status']}\nLast update: {data['last_update']}")
+                else:
+                    await message.answer("❌ Server reached but you are not registered yet. Please share location first.")
     except Exception as e:
         await message.answer("⚠️ Connection to server failed. You might be in a dead zone.")
 
@@ -60,26 +60,28 @@ async def cmd_setname(message: types.Message):
     payload = {"telegram_id": tg_id, "name": new_name}
     
     try:
-        resp = requests.post(SETNAME_URL, json=payload)
-        if resp.status_code == 200:
-            await message.answer(f"✅ Name successfully updated to: {new_name}")
-        else:
-            await message.answer("❌ Please share your location first to register in the system.")
+        async with aiohttp.ClientSession() as session:
+            async with session.post(SETNAME_URL, json=payload) as resp:
+                if resp.status == 200:
+                    await message.answer(f"✅ Name successfully updated to: {new_name}")
+                else:
+                    await message.answer("❌ Please share your location first to register in the system.")
     except Exception as e:
         await message.answer("⚠️ Connection to server failed.")
 
-# handling shift reset request
+# handling shift reset request asynchronously
 @dp.message(F.text == "🏁 Reset Shift")
 async def handle_reset(message: types.Message):
     tg_id = message.from_user.id
     payload = {"telegram_id": tg_id}
     
     try:
-        resp = requests.post(RESET_URL, json=payload)
-        if resp.status_code == 200:
-            await message.answer("✅ Shift history reset. Your route on the map has been cleared for a new trip.")
-        else:
-            await message.answer("❌ Failed to reset shift. Are you registered?")
+        async with aiohttp.ClientSession() as session:
+            async with session.post(RESET_URL, json=payload) as resp:
+                if resp.status == 200:
+                    await message.answer("✅ Shift history reset. Your route on the map has been cleared for a new trip.")
+                else:
+                    await message.answer("❌ Failed to reset shift. Are you registered?")
     except Exception as e:
         await message.answer("⚠️ Error connecting to server.")
 
@@ -100,14 +102,15 @@ async def handle_location(message: types.Message):
     }
     
     try:
-        resp = requests.post(SERVER_URL, json=payload)
-        if resp.status_code == 200:
-            print(f"Location updated for {tg_id}")
-            await message.answer("Location updated. You can now send a photo of the gate or container to set a visual anchor.")
-        else:
-            print("Server error during update")
+        async with aiohttp.ClientSession() as session:
+            async with session.post(SERVER_URL, json=payload) as resp:
+                if resp.status == 200:
+                    logging.info(f"Location updated for {tg_id}")
+                    await message.answer("Location updated. You can now send a photo of the gate or container to set a visual anchor.")
+                else:
+                    logging.error("Server error during update")
     except Exception as e:
-        print(f"Connection failed: {e}")
+        logging.error(f"Connection failed: {e}")
 
 # handling photo uploads for visual anchors
 @dp.message(F.photo)
@@ -131,11 +134,12 @@ async def handle_photo(message: types.Message):
     }
     
     try:
-        resp = requests.post(ANCHOR_URL, json=payload)
-        if resp.status_code == 200:
-            await message.answer("Visual anchor successfully saved to dispatcher dashboard.")
-        else:
-            await message.answer("Failed to save anchor on server.")
+        async with aiohttp.ClientSession() as session:
+            async with session.post(ANCHOR_URL, json=payload) as resp:
+                if resp.status == 200:
+                    await message.answer("Visual anchor successfully saved to dispatcher dashboard.")
+                else:
+                    await message.answer("Failed to save anchor on server.")
     except Exception as e:
          await message.answer("Error connecting to server.")
 
@@ -143,16 +147,17 @@ async def handle_photo(message: types.Message):
 @dp.message(F.text == "⚠️ SOS / Issue")
 async def handle_emergency(message: types.Message):
     tg_id = message.from_user.id
-    
-    # explicitly hitting the emergency endpoint
     payload = {"telegram_id": tg_id}
+    
+    # Fire and forget request for SOS
     try:
-        requests.post(EMERGENCY_URL, json=payload)
+        async with aiohttp.ClientSession() as session:
+            await session.post(EMERGENCY_URL, json=payload)
     except Exception as e:
-        print(f"Failed to alert server: {e}")
+        logging.error(f"Failed to alert server: {e}")
         
     await message.answer("EMERGENCY SIGNAL SENT to dispatcher. Please stay calm, we are recording your last known location.")
-    print(f"!!! EMERGENCY ALERT TRIGGERED BY USER {tg_id} !!!")
+    logging.warning(f"!!! EMERGENCY ALERT TRIGGERED BY USER {tg_id} !!!")
 
 # fallback handler for any unrecognized text or media
 @dp.message()
@@ -160,11 +165,13 @@ async def handle_unrecognized(message: types.Message):
     await message.answer("Command not recognized. Please share your location, send a photo, or use the menu buttons.")
 
 async def main():
-    print("Bot is running...")
+    logging.info("Starting bot...")
+    # Drop pending updates to avoid processing old locations if bot was offline
+    await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())
     except (KeyboardInterrupt, SystemExit):
-        print("Bot stopped")
+        logging.info("Bot stopped")
