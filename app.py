@@ -1,14 +1,13 @@
 from flask import Flask, render_template, request, jsonify, redirect, Response
 from flask_sqlalchemy import SQLAlchemy
-from datetime import datetime
+from datetime import datetime, timedelta
 import os
-import config # importing our centralized configuration
-import logging # importing the logging library for server monitoring
-import requests # required to fetch photos from Telegram API
+import config
+import logging
+import requests
 import csv
 import io
 
-# setup logging to a file
 logging.basicConfig(
     filename='system.log',
     level=logging.INFO,
@@ -17,23 +16,24 @@ logging.basicConfig(
 
 app = Flask(__name__)
 
-# database setup using config
 app.config['SQLALCHEMY_DATABASE_URI'] = config.SQLALCHEMY_DATABASE_URI
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
 
-# models for tracking
+# ================= DATABASE MODELS =================
 class Driver(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     telegram_id = db.Column(db.String(50), unique=True, nullable=False)
     name = db.Column(db.String(100))
     status = db.Column(db.String(50), default='Offline')
+    issue_text = db.Column(db.String(255), nullable=True)
+    is_tracking = db.Column(db.Boolean, default=False)
+    safety_timer_end = db.Column(db.DateTime, nullable=True)
     last_lat = db.Column(db.Float)
     last_lng = db.Column(db.Float)
     last_update = db.Column(db.DateTime, default=datetime.utcnow)
 
 class RoutePoint(db.Model):
-    # storing coordinates for the leaflet map path
     id = db.Column(db.Integer, primary_key=True)
     driver_id = db.Column(db.Integer, db.ForeignKey('driver.id'))
     lat = db.Column(db.Float, nullable=False)
@@ -41,7 +41,6 @@ class RoutePoint(db.Model):
     timestamp = db.Column(db.DateTime, default=datetime.utcnow)
 
 class AnchorPoint(db.Model):
-    # visual anchors for precise unloading locations
     id = db.Column(db.Integer, primary_key=True)
     driver_id = db.Column(db.Integer, db.ForeignKey('driver.id'))
     lat = db.Column(db.Float, nullable=False)
@@ -51,7 +50,6 @@ class AnchorPoint(db.Model):
     timestamp = db.Column(db.DateTime, default=datetime.utcnow)
 
 class ArchivedRoute(db.Model):
-    # stores historical routes after a shift reset for future analytics
     id = db.Column(db.Integer, primary_key=True)
     driver_id = db.Column(db.Integer, db.ForeignKey('driver.id'))
     lat = db.Column(db.Float, nullable=False)
@@ -59,150 +57,185 @@ class ArchivedRoute(db.Model):
     timestamp = db.Column(db.DateTime)
     archived_at = db.Column(db.DateTime, default=datetime.utcnow)
 
-# init tables
 with app.app_context():
     db.create_all()
 
-# endpoint to receive regular location updates
+# ================= API ENDPOINTS =================
+
 @app.route('/api/update_location', methods=['POST'])
 def update_location():
     try:
         data = request.json
-        if not data:
-            return jsonify({"error": "no data"}), 400
-        
         tg_id = str(data.get('telegram_id'))
         lat = data.get('lat')
         lng = data.get('lng')
+        status = data.get('status')
+        is_tracking = data.get('is_tracking')
         
         driver = Driver.query.filter_by(telegram_id=tg_id).first()
         if not driver:
             driver = Driver(telegram_id=tg_id, name=f"User {tg_id[-4:]}")
             db.session.add(driver)
-            db.session.flush() 
+            db.session.flush()
+
+        if status:
+            driver.status = status
+            # Clear issue text if status changes from Problem to something else
+            if "Issue" not in driver.status and "Проблема" not in driver.status:
+                driver.issue_text = None
+        elif driver.status == 'Offline':
+            driver.status = 'Active'
+
+        if is_tracking is not None:
+            driver.is_tracking = bool(is_tracking)
         
-        driver.last_lat = lat
-        driver.last_lng = lng
+        if lat and lng:
+            driver.last_lat = lat
+            driver.last_lng = lng
+            # Only save route points if driver is active
+            if driver.status != 'Offline':
+                last_point = RoutePoint.query.filter_by(driver_id=driver.id).order_by(RoutePoint.id.desc()).first()
+                if not last_point or (last_point.lat != lat or last_point.lng != lng):
+                    new_point = RoutePoint(driver_id=driver.id, lat=lat, lng=lng)
+                    db.session.add(new_point)
+        
         driver.last_update = datetime.utcnow()
-        driver.status = 'Active'
-        
-        new_point = RoutePoint(driver_id=driver.id, lat=lat, lng=lng)
-        db.session.add(new_point)
         db.session.commit()
-        
-        # log successful update
-        logging.info(f"Location update successful for driver ID: {tg_id}")
         return jsonify({"status": "ok"}), 200
     except Exception as e:
-        # log errors if database or payload fails
         logging.error(f"Error in update_location: {e}")
         return jsonify({"error": "Internal server error"}), 500
 
-# check status for the bot command /status
 @app.route('/api/check_status/<string:tg_id>', methods=['GET'])
 def check_status(tg_id):
     try:
         driver = Driver.query.filter_by(telegram_id=tg_id).first()
         if not driver:
-            return jsonify({"status": "Unknown", "message": "Driver not registered"}), 404
-        
+            return jsonify({"status": "Unknown", "is_tracking": False}), 404
         return jsonify({
             "status": driver.status,
-            "last_update": driver.last_update.isoformat() if driver.last_update else None
+            "is_tracking": driver.is_tracking,
+            # 'Z' indicates UTC time to the browser for correct local offset
+            "last_update": driver.last_update.isoformat() + "Z" if driver.last_update else None
         }), 200
     except Exception as e:
         logging.error(f"Error checking status for {tg_id}: {e}")
         return jsonify({"error": "server error"}), 500
 
-# endpoint to update driver name/vehicle number
 @app.route('/api/update_name', methods=['POST'])
 def update_name():
     try:
         data = request.json
-        if not data:
-            return jsonify({"error": "no data"}), 400
-            
         tg_id = str(data.get('telegram_id'))
         new_name = data.get('name')
-        
         driver = Driver.query.filter_by(telegram_id=tg_id).first()
-        if not driver:
-            return jsonify({"error": "driver not found"}), 404
-            
-        driver.name = new_name
-        db.session.commit()
-        
-        logging.info(f"Name updated to {new_name} for driver ID: {tg_id}")
-        return jsonify({"status": "name updated"}), 200
+        if driver:
+            driver.name = new_name
+            db.session.commit()
+            return jsonify({"status": "name updated"}), 200
+        return jsonify({"error": "driver not found"}), 404
     except Exception as e:
-        logging.error(f"Error in update_name: {e}")
         return jsonify({"error": "Internal server error"}), 500
 
-# endpoint to trigger SOS emergency mode
 @app.route('/api/emergency', methods=['POST'])
 def emergency():
     try:
         data = request.json
-        if not data:
-            return jsonify({"error": "no data"}), 400
-            
         tg_id = str(data.get('telegram_id'))
         driver = Driver.query.filter_by(telegram_id=tg_id).first()
-        
         if driver:
             driver.status = 'SOS / Emergency'
             driver.last_update = datetime.utcnow()
             db.session.commit()
             logging.warning(f"EMERGENCY TRIGGERED FOR DRIVER ID: {tg_id}")
             return jsonify({"status": "emergency registered"}), 200
-        
         return jsonify({"error": "driver not found"}), 404
     except Exception as e:
-        logging.error(f"Error in emergency endpoint: {e}")
         return jsonify({"error": "Internal server error"}), 500
 
-# endpoint to reset driver route (start new shift)
+@app.route('/api/issue', methods=['POST'])
+def receive_issue():
+    try:
+        data = request.json
+        driver = Driver.query.filter_by(telegram_id=str(data.get('telegram_id'))).first()
+        if driver:
+            driver.status = "Issue Reported"
+            driver.issue_text = data.get('issue_text')
+            driver.last_update = datetime.utcnow()
+            db.session.commit()
+            return jsonify({"status": "success"}), 200
+        return jsonify({"error": "driver not found"}), 404
+    except Exception as e:
+        return jsonify({"error": "Internal server error"}), 500
+
+@app.route('/api/reply_issue', methods=['POST'])
+def reply_issue():
+    try:
+        data = request.json
+        driver = Driver.query.get(data.get('driver_id'))
+        if driver and data.get('message'):
+            url = f"https://api.telegram.org/bot{config.TELEGRAM_TOKEN}/sendMessage"
+            payload = {
+                "chat_id": driver.telegram_id, 
+                "text": f"👨‍💻 <b>Message from dispatcher:</b>\n{data.get('message')}", 
+                "parse_mode": "HTML"
+            }
+            requests.post(url, json=payload)
+            driver.issue_text = None
+            driver.status = "Active (Issue Addressed)"
+            db.session.commit()
+            return jsonify({"status": "success"}), 200
+        return jsonify({"error": "bad request"}), 400
+    except Exception as e:
+        return jsonify({"error": "Internal server error"}), 500
+
+@app.route('/api/safety', methods=['POST'])
+def manage_safety():
+    try:
+        data = request.json
+        driver = Driver.query.filter_by(telegram_id=str(data.get('telegram_id'))).first()
+        if driver:
+            if data.get('action') == 'start':
+                driver.safety_timer_end = datetime.utcnow() + timedelta(hours=data.get('hours', 1))
+            elif data.get('action') == 'stop':
+                driver.safety_timer_end = None
+            db.session.commit()
+            return jsonify({"status": "success"}), 200
+        return jsonify({"error": "driver not found"}), 404
+    except Exception as e:
+        return jsonify({"error": "Internal server error"}), 500
+
 @app.route('/api/reset_route', methods=['POST'])
 def reset_route():
     try:
         data = request.json
-        if not data:
-            return jsonify({"error": "no data"}), 400
-            
         tg_id = str(data.get('telegram_id'))
         driver = Driver.query.filter_by(telegram_id=tg_id).first()
-        
         if not driver:
             return jsonify({"error": "driver not found"}), 404
             
-        # archive current route points before clearing
         current_points = RoutePoint.query.filter_by(driver_id=driver.id).all()
         for p in current_points:
             archive_point = ArchivedRoute(driver_id=p.driver_id, lat=p.lat, lng=p.lng, timestamp=p.timestamp)
             db.session.add(archive_point)
             
-        # delete all active route points to clear the map for a new shift
         RoutePoint.query.filter_by(driver_id=driver.id).delete()
-        driver.status = 'Active'
-        db.session.commit()
         
-        logging.info(f"Route history archived and reset for driver ID: {tg_id}")
+        # Reset driver to completely offline to prevent false alarms
+        driver.status = 'Offline'
+        driver.is_tracking = False
+        driver.safety_timer_end = None
+        db.session.commit()
         return jsonify({"status": "route reset"}), 200
     except Exception as e:
-        logging.error(f"Error in reset_route: {e}")
         return jsonify({"error": "Internal server error"}), 500
 
-# endpoint to save visual anchors
 @app.route('/api/add_anchor', methods=['POST'])
 def add_anchor():
     try:
         data = request.json
-        if not data:
-            return jsonify({"error": "no data"}), 400
-            
         tg_id = str(data.get('telegram_id'))
         driver = Driver.query.filter_by(telegram_id=tg_id).first()
-        
         if not driver:
             return jsonify({"error": "driver not found"}), 404
             
@@ -211,54 +244,70 @@ def add_anchor():
             lat=data.get('lat'),
             lng=data.get('lng'),
             photo_id=data.get('photo_id'),
-            note=data.get('note', 'Arrived at anchor')
+            note=data.get('note', 'Visual anchor')
         )
-        
         db.session.add(anchor)
         driver.status = 'At Anchor'
         db.session.commit()
-        
-        logging.info(f"Anchor successfully saved for driver ID: {tg_id}")
         return jsonify({"status": "anchor saved"}), 200
     except Exception as e:
-        logging.error(f"Error in add_anchor: {e}")
         return jsonify({"error": "Internal server error"}), 500
 
-# api for the frontend dashboard to fetch active drivers
+# ================= DASHBOARD ENDPOINTS =================
+
 @app.route('/api/get_drivers', methods=['GET'])
 def get_drivers():
     try:
         drivers = Driver.query.all()
         result = []
-        now = datetime.utcnow() # get current time for safety check
+        now = datetime.utcnow()
         
         for d in drivers:
             if d.last_lat and d.last_lng:
-                # skip drivers who haven't updated in over 12 hours (43200 seconds)
+                # 12-hour general inactivity cleanup
                 if d.last_update and (now - d.last_update).total_seconds() > 43200:
                     continue
 
                 current_status = d.status
-                
-                # safety timer logic: use timeout variable from config
-                if d.last_update and (now - d.last_update).total_seconds() > config.SAFETY_TIMEOUT_SECONDS:
-                    if current_status != 'At Anchor' and current_status != 'SOS / Emergency':
-                        current_status = 'Warning (Lost Signal)'
+                safety_status = "none"
+                safety_text = ""
+
+                # Safety logic is ONLY applied if driver is actually on shift
+                if d.status != 'Offline':
+                    if d.safety_timer_end:
+                        remaining = d.safety_timer_end - now
+                        if remaining.total_seconds() < 0:
+                            safety_status = "alarm"
+                            safety_text = "⚠️ NO SIGNAL: TIMER EXPIRED!"
+                        else:
+                            safety_status = "active"
+                            hours, remainder = divmod(remaining.total_seconds(), 3600)
+                            mins, _ = divmod(remainder, 60)
+                            safety_text = f"⏳ Safety Timer: {int(hours)}h {int(mins)}m"
+                    else:
+                        if d.last_update and (now - d.last_update).total_seconds() > config.SAFETY_TIMEOUT_SECONDS:
+                            if current_status not in ['At Anchor', 'SOS / Emergency']:
+                                current_status = 'Warning (Lost Signal)'
+                                safety_status = "alarm"
+                                safety_text = "⚠️ SIGNAL LOST"
 
                 result.append({
                     "id": d.id,
                     "name": d.name,
                     "status": current_status,
+                    "issue_text": d.issue_text,
+                    "is_tracking": d.is_tracking,
+                    "safety_status": safety_status,
+                    "safety_text": safety_text,
                     "lat": d.last_lat,
                     "lng": d.last_lng,
-                    "last_update": d.last_update.isoformat() if d.last_update else None
+                    "last_update": d.last_update.isoformat() + "Z" if d.last_update else None
                 })
         return jsonify(result), 200
     except Exception as e:
         logging.error(f"Error fetching drivers: {e}")
         return jsonify({"error": "Failed to fetch drivers"}), 500
 
-# api to fetch the full breadcrumb trail for a specific driver
 @app.route('/api/get_route/<int:driver_id>', methods=['GET'])
 def get_route(driver_id):
     try:
@@ -268,14 +317,12 @@ def get_route(driver_id):
             result.append({
                 "lat": p.lat,
                 "lng": p.lng,
-                "time": p.timestamp.isoformat()
+                "time": p.timestamp.isoformat() + "Z"
             })
         return jsonify(result), 200
     except Exception as e:
-        logging.error(f"Error fetching route for driver {driver_id}: {e}")
         return jsonify([]), 500
 
-# api to fetch visual anchors for the map
 @app.route('/api/get_anchors', methods=['GET'])
 def get_anchors():
     try:
@@ -292,10 +339,8 @@ def get_anchors():
             })
         return jsonify(result), 200
     except Exception as e:
-        logging.error(f"Error fetching anchors: {e}")
         return jsonify([]), 500
 
-# endpoint to fetch and proxy photos from telegram for the dashboard
 @app.route('/api/get_photo/<string:photo_id>', methods=['GET'])
 def get_photo(photo_id):
     try:
@@ -306,32 +351,27 @@ def get_photo(photo_id):
             return redirect(f"https://api.telegram.org/file/bot{config.TELEGRAM_TOKEN}/{file_path}")
         return jsonify({"error": "Photo not found"}), 404
     except Exception as e:
-        logging.error(f"Error fetching photo {photo_id}: {e}")
         return jsonify({"error": "Internal server error"}), 500
 
-# endpoint to export archived routes as CSV for analytics
 @app.route('/api/export_routes', methods=['GET'])
 def export_routes():
     try:
         si = io.StringIO()
         cw = csv.writer(si)
         cw.writerow(['driver_id', 'lat', 'lng', 'timestamp', 'archived_at'])
-        
         records = ArchivedRoute.query.all()
         for r in records:
             cw.writerow([
                 r.driver_id, 
                 r.lat, 
                 r.lng, 
-                r.timestamp.isoformat() if r.timestamp else '', 
-                r.archived_at.isoformat() if r.archived_at else ''
+                r.timestamp.isoformat() + "Z" if r.timestamp else '', 
+                r.archived_at.isoformat() + "Z" if r.archived_at else ''
             ])
-            
         output = Response(si.getvalue(), mimetype='text/csv')
         output.headers["Content-Disposition"] = "attachment; filename=archived_routes.csv"
         return output
     except Exception as e:
-        logging.error(f"Error exporting routes: {e}")
         return jsonify({"error": "Internal server error"}), 500
 
 @app.route('/')
@@ -339,5 +379,4 @@ def index():
     return render_template('index.html')
 
 if __name__ == '__main__':
-    # now using port from config
     app.run(debug=True, port=config.SERVER_PORT)

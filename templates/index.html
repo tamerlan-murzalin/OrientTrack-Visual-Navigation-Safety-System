@@ -45,7 +45,10 @@
         .driver-card { padding: 12px; background: #f8f9fa; border-radius: 6px; margin-bottom: 10px; cursor: pointer; border-left: 4px solid #3498db; transition: 0.2s; }
         .driver-card:hover { background: #e9ecef; transform: translateX(3px); }
         .driver-card.issue { border-left-color: #e74c3c; background: #fdedec; }
+        .driver-card.alarm { border-left-color: #c0392b; background: #ffebee; border: 1px solid #ffcdd2; animation: blinker 1.5s linear infinite; }
         
+        @keyframes blinker { 50% { opacity: 0.7; } }
+
         /* Fleet filters and summary */
         .filters { margin-bottom: 15px; display: flex; gap: 5px; flex-wrap: wrap; }
         .filter-btn { padding: 5px 10px; border: 1px solid #ddd; border-radius: 4px; background: white; cursor: pointer; font-size: 0.85em; transition: 0.2s; }
@@ -145,12 +148,14 @@
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script>
+        // Initialize with a default view, but we will auto-center soon
         var map = L.map('map').setView([43.2389, 76.8897], 11);
         L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(map);
 
         var driverMarkers = {};
         var currentFilter = 'All';
         var drawnPolyline = null;
+        var isFirstLoad = true; // Auto-centering flag
 
         const tabTitles = {
             'live-map': 'Live Dispatcher Map',
@@ -175,6 +180,21 @@
             document.querySelectorAll('.filter-btn').forEach(btn => btn.classList.remove('active'));
             btnElement.classList.add('active');
             fetchLiveData();
+        }
+
+        // Send a direct reply to a driver issue
+        function sendReply(event, driverId) {
+            event.stopPropagation();
+            let input = document.getElementById(`reply-${driverId}`);
+            if(!input.value) return;
+            fetch('/api/reply_issue', {
+                method: 'POST', 
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ driver_id: driverId, message: input.value })
+            }).then(() => { 
+                alert("Reply sent successfully!"); 
+                fetchLiveData(); 
+            });
         }
 
         // Main polling function
@@ -208,28 +228,47 @@
             let now = new Date();
 
             drivers.forEach(d => {
-                let diffMins = Math.floor((now - new Date(d.last_update)) / 60000);
+                let lastUpdateDate = new Date(d.last_update);
+                let diffMins = Math.floor((now - lastUpdateDate) / 60000);
                 let timeText = diffMins > 0 ? `${diffMins} min ago` : "just now";
                 
-                let isWarning = d.status.includes('Warning') || d.status.includes('SOS');
+                let isWarning = d.status.includes('Warning') || d.status.includes('SOS') || d.safety_status === 'alarm';
                 let isAnchor = d.status.includes('Anchor');
 
                 if (isWarning) cWarning++;
                 else if (isAnchor) cAnchor++;
-                else cActive++;
+                else if (d.status !== 'Offline') cActive++;
 
-                let show = (currentFilter === 'All') || 
+                // Filter logic (Hide Offline drivers)
+                let show = (currentFilter === 'All' && d.status !== 'Offline') || 
                            (currentFilter === 'Warning' && isWarning) || 
-                           (currentFilter === 'Active' && !isWarning && !isAnchor) ||
+                           (currentFilter === 'Active' && !isWarning && !isAnchor && d.status !== 'Offline') ||
                            (currentFilter === 'At Anchor' && isAnchor);
 
                 if(show) {
                     let cardClass = isWarning ? "driver-card issue" : "driver-card";
+                    if (d.safety_status === "alarm") cardClass += " alarm";
+
+                    let safetyHtml = "";
+                    if(d.safety_status === "active") safetyHtml = `<div style="color: #f39c12; font-size: 12px; font-weight:bold; margin-top: 4px;">${d.safety_text}</div>`;
+                    if(d.safety_status === "alarm") safetyHtml = `<div style="color: #c0392b; font-weight: bold; font-size: 12px; margin-top: 4px;">${d.safety_text}</div>`;
+
+                    let issueHtml = d.issue_text ? `
+                        <div style="margin-top: 8px; padding: 8px; background: white; border: 1px solid #dc3545; border-radius: 4px;">
+                            <small style="color:#c62828;"><b>🚨 Issue:</b> ${d.issue_text}</small>
+                            <div style="display: flex; margin-top: 5px; gap: 5px;">
+                                <input type="text" id="reply-${d.id}" placeholder="Reply to driver..." style="flex:1; padding: 4px; font-size:12px; border: 1px solid #ccc;">
+                                <button onclick="sendReply(event, ${d.id})" style="background:#28a745; color:white; border:none; padding:4px 8px; cursor:pointer; border-radius: 3px;">Send</button>
+                            </div>
+                        </div>` : "";
+
                     listHtml += `
                         <div class="${cardClass}" onclick="map.flyTo([${d.lat}, ${d.lng}], 15, {duration: 1.5});">
                             <b style="font-size: 16px;">${d.name}</b>
                             <div style="font-size: 13px; color: #555; margin-top: 2px;">Status: <b>${d.status}</b></div>
                             <div style="font-size: 12px; color: #7f8c8d; margin-top: 4px;">Last seen: ${timeText}</div>
+                            ${safetyHtml}
+                            ${issueHtml}
                         </div>`;
                 }
             });
@@ -240,38 +279,61 @@
             document.getElementById('driver-list').innerHTML = listHtml || "<p style='color: #7f8c8d; font-size: 14px;'>No drivers match filter.</p>";
         }
 
-        // Render Leaflet markers
+        // Render Leaflet markers and handle Auto-Centering
         function updateMapMarkers(drivers) {
             let now = new Date();
+            let bounds = [];
+
             drivers.forEach(d => {
-                if(d.lat && d.lng) {
-                    let diffMins = Math.floor((now - new Date(d.last_update)) / 60000);
+                // Remove offline markers
+                if(d.status === 'Offline' && driverMarkers[d.id]) {
+                    map.removeLayer(driverMarkers[d.id]);
+                    delete driverMarkers[d.id];
+                    return;
+                }
+
+                if(d.lat && d.lng && d.status !== 'Offline') {
+                    let lastUpdateDate = new Date(d.last_update);
+                    let diffMins = Math.floor((now - lastUpdateDate) / 60000);
                     let timeText = diffMins > 0 ? `${diffMins} min ago` : "just now";
                     
-                    let color = (d.status.includes('Warning') || d.status.includes('SOS')) ? '#e74c3c' : '#3498db';
+                    let color = (d.status.includes('Warning') || d.status.includes('SOS') || d.safety_status === 'alarm') ? '#e74c3c' : '#3498db';
                     let popupHtml = `<b>${d.name}</b><br>Status: ${d.status}<br>Seen: ${timeText}`;
 
                     if(driverMarkers[d.id]) {
                         driverMarkers[d.id].setLatLng([d.lat, d.lng]).getPopup().setContent(popupHtml);
+                        driverMarkers[d.id].setStyle({color: color, fillColor: color});
                     } else {
                         driverMarkers[d.id] = L.circleMarker([d.lat, d.lng], {
                             color: color, fillColor: color, fillOpacity: 0.8, radius: 8
                         }).addTo(map).bindPopup(popupHtml);
                     }
+                    
+                    bounds.push([d.lat, d.lng]);
                 }
             });
+
+            // If it's the very first load and we have active drivers, fit the map to show all of them
+            if (isFirstLoad && bounds.length > 0) {
+                map.fitBounds(bounds, {padding: [50, 50]});
+                isFirstLoad = false;
+            }
         }
 
+        // Render Data Table
         function updateDriversTable(drivers) {
             let tbody = document.getElementById('drivers-table-body');
             tbody.innerHTML = '';
             let now = new Date();
             drivers.forEach(d => {
                 let coords = (d.lat && d.lng) ? `${d.lat.toFixed(4)}, ${d.lng.toFixed(4)}` : '-';
-                let diffMins = Math.floor((now - new Date(d.last_update)) / 60000);
+                let lastUpdateDate = new Date(d.last_update);
+                let diffMins = Math.floor((now - lastUpdateDate) / 60000);
                 let timeText = diffMins > 0 ? `${diffMins} min ago` : "just now";
                 
-                tbody.innerHTML += `<tr>
+                let rowStyle = d.status === 'Offline' ? 'style="opacity: 0.5;"' : '';
+
+                tbody.innerHTML += `<tr ${rowStyle}>
                     <td>#${d.id}</td>
                     <td><b>${d.name}</b></td>
                     <td><span style="padding: 4px 8px; border-radius: 4px; background: #e1f5fe; color: #0288d1; font-size: 12px; font-weight: bold;">${d.status}</span></td>
