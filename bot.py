@@ -85,7 +85,7 @@ async def process_init_start(callback: types.CallbackQuery, state: FSMContext):
         "Please broadcast your live location to continue:\n\n"
         "1. Tap the 📎 Paperclip icon\n"
         "2. Select 'Location'\n"
-        "3. Choose <b>'Share My Live Location for...'</b>\n\n"
+        "3. Choose <b>'Share My Live Location for...'</b> and select <b>'Until turned off'</b>.\n\n"
         "Controls will unlock once the background stream is detected."
     )
     await callback.message.edit_text(instruction, parse_mode="HTML")
@@ -128,10 +128,13 @@ async def process_status_callback(callback: types.CallbackQuery, state: FSMConte
     payload = {"telegram_id": str(callback.from_user.id), "status": new_status}
     try:
         async with aiohttp.ClientSession() as session:
-            await session.post(SERVER_URL, json=payload)
-        await callback.message.edit_text(f"✅ Status updated to: <b>{new_status}</b>", parse_mode="HTML")
+            async with session.post(SERVER_URL, json=payload) as resp:
+                if resp.status == 200:
+                    await callback.message.edit_text(f"✅ Status updated to: <b>{new_status}</b>", parse_mode="HTML")
+                else:
+                    await callback.answer("❌ Server error during update.", show_alert=True)
     except Exception:
-        await callback.answer("❌ Server error", show_alert=True)
+        await callback.answer("❌ Server connection failed", show_alert=True)
 
 @dp.message(AppState.waiting_for_issue_text, F.text)
 async def process_issue_text(message: types.Message, state: FSMContext):
@@ -169,7 +172,15 @@ async def handle_location(message: types.Message, state: FSMContext):
     current_state = await state.get_state()
     
     user_locations[tg_id] = {"lat": lat, "lng": lng}
-    payload = {"telegram_id": str(tg_id), "lat": lat, "lng": lng, "is_tracking": is_live}
+    
+    # Passing the name so the server doesn't create "User 1234"
+    payload = {
+        "telegram_id": str(tg_id), 
+        "name": message.from_user.first_name, 
+        "lat": lat, 
+        "lng": lng, 
+        "is_tracking": is_live
+    }
     
     if current_state == AppState.waiting_for_live_location.state:
         if not is_live:
@@ -184,8 +195,11 @@ async def handle_location(message: types.Message, state: FSMContext):
                         logging.info(f"Shift initialized for {tg_id}")
                         await message.answer("✅ <b>Live tracking locked!</b> Shift controls are now available.", parse_mode="HTML", reply_markup=get_main_keyboard())
                         await state.clear()
-        except Exception:
-            logging.error("Connection failed during init")
+                    else:
+                        await message.answer("❌ The server rejected the request. Please check if the dispatcher system is running.")
+        except Exception as e:
+            logging.error(f"Connection failed during init: {e}")
+            await message.answer("⚠️ Could not connect to the server. Make sure your app.py is running.")
     else:
         try:
             async with aiohttp.ClientSession() as session:

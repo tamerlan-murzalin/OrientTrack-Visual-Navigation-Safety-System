@@ -7,6 +7,7 @@ import logging
 import requests
 import csv
 import io
+import traceback
 
 logging.basicConfig(
     filename='system.log',
@@ -69,12 +70,13 @@ def update_location():
         lng = data.get('lng')
         status = data.get('status')
         is_tracking = data.get('is_tracking')
+        name = data.get('name', f"User {tg_id[-4:]}")
         
         driver = Driver.query.filter_by(telegram_id=tg_id).first()
         if not driver:
-            driver = Driver(telegram_id=tg_id, name=f"User {tg_id[-4:]}")
+            driver = Driver(telegram_id=tg_id, name=name)
             db.session.add(driver)
-            db.session.flush()
+            db.session.commit() # FORCE COMMIT to ensure ID is generated
 
         if status:
             driver.status = status
@@ -87,19 +89,19 @@ def update_location():
             driver.is_tracking = bool(is_tracking)
         
         if lat and lng:
-            driver.last_lat = lat
-            driver.last_lng = lng
+            driver.last_lat = float(lat)
+            driver.last_lng = float(lng)
             if driver.status != 'Offline':
                 last_point = RoutePoint.query.filter_by(driver_id=driver.id).order_by(RoutePoint.id.desc()).first()
-                if not last_point or (last_point.lat != lat or last_point.lng != lng):
-                    new_point = RoutePoint(driver_id=driver.id, lat=lat, lng=lng)
+                if not last_point or (last_point.lat != driver.last_lat or last_point.lng != driver.last_lng):
+                    new_point = RoutePoint(driver_id=driver.id, lat=driver.last_lat, lng=driver.last_lng)
                     db.session.add(new_point)
         
         driver.last_update = datetime.utcnow()
         db.session.commit()
         return jsonify({"status": "ok"}), 200
     except Exception as e:
-        logging.error(f"Error in update_location: {e}")
+        logging.error(f"Error in update_location: {e}\n{traceback.format_exc()}")
         return jsonify({"error": "Internal server error"}), 500
 
 # check status for the bot command /status

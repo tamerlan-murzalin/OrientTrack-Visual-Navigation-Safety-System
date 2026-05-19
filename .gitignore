@@ -9,3 +9,4 @@ orienttrack.db
 # System files
 .DS_Store
 .envsystem.log
+system.log
