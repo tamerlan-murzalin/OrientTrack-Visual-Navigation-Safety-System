@@ -16,6 +16,8 @@ EMERGENCY_URL = f"{config.SERVER_URL}/api/emergency"
 SETNAME_URL = f"{config.SERVER_URL}/api/update_name"
 RESET_URL = f"{config.SERVER_URL}/api/reset_route"
 ISSUE_URL = f"{config.SERVER_URL}/api/issue"
+VOICE_URL = f"{config.SERVER_URL}/api/voice"
+SAFETY_URL = f"{config.SERVER_URL}/api/safety"
 
 logging.basicConfig(level=logging.INFO)
 
@@ -29,10 +31,14 @@ user_locations = {}
 # defining finite state machines for strict data flow
 class AppState(StatesGroup):
     waiting_for_live_location = State()
+    waiting_for_issue_text = State()
 
 class AnchorState(StatesGroup):
     waiting_for_photo = State()
     waiting_for_description = State()
+
+class SafetyState(StatesGroup):
+    waiting_for_custom_time = State()
 
 # building dynamic keyboards for the workflow
 def get_start_keyboard():
@@ -41,7 +47,7 @@ def get_start_keyboard():
 
 def get_main_keyboard():
     kb = [
-        [KeyboardButton(text="🔄 Update Status"), KeyboardButton(text="📍 Live Tracking Guide")],
+        [KeyboardButton(text="🔄 Update Status"), KeyboardButton(text="⛰️ Safety Timer")],
         [KeyboardButton(text="📸 Add Visual Anchor"), KeyboardButton(text="⚠️ SOS / Issue")],
         [KeyboardButton(text="🏁 Reset Shift")]
     ]
@@ -66,6 +72,11 @@ async def cmd_start(message: types.Message, state: FSMContext):
     await message.answer("Ready to begin?", reply_markup=get_start_keyboard())
     await state.clear()
 
+@dp.message(F.text == "❌ Cancel")
+async def cancel_action(message: types.Message, state: FSMContext):
+    await state.clear()
+    await message.answer("Action canceled.", reply_markup=get_main_keyboard())
+
 # handling shift initialization and strict tracking requirement
 @dp.callback_query(F.data == "init_start")
 async def process_init_start(callback: types.CallbackQuery, state: FSMContext):
@@ -81,46 +92,23 @@ async def process_init_start(callback: types.CallbackQuery, state: FSMContext):
     await state.set_state(AppState.waiting_for_live_location)
     await callback.answer()
 
-@dp.message(F.text == "📍 Live Tracking Guide")
-async def guide_location(message: types.Message):
-    await message.answer("Remember: Always use 'Share My Live Location' for constant background tracking. Static points do not update on the dispatcher map.")
-
-# handling /status command to check server connection asynchronously
-@dp.message(Command("status"))
-async def cmd_status(message: types.Message):
-    tg_id = message.from_user.id
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(f"{STATUS_URL}/{tg_id}", timeout=5) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    tracking = "🟢 Active" if data.get('is_tracking') else "🔴 Inactive"
-                    await message.answer(f"✅ Connection OK.\nStatus: {data['status']}\nTracking: {tracking}\nLast update: {data['last_update']}")
-                else:
-                    await message.answer("❌ Server reached but you are not registered yet. Please start your shift first.")
-    except Exception as e:
-        await message.answer("⚠️ Connection to server failed. You might be in a dead zone.")
-
 @dp.message(Command("setname"))
 async def cmd_setname(message: types.Message):
     tg_id = message.from_user.id
     parts = message.text.split(maxsplit=1)
-    
     if len(parts) < 2:
         await message.answer("Please provide a name or vehicle number. Example: /setname Truck 55")
         return
-        
     new_name = parts[1]
     payload = {"telegram_id": str(tg_id), "name": new_name}
-    
     try:
         async with aiohttp.ClientSession() as session:
             async with session.post(SETNAME_URL, json=payload) as resp:
                 if resp.status == 200:
                     await message.answer(f"✅ Name successfully updated to: {new_name}")
                 else:
-                    await message.answer("❌ Please share your location first to register in the system.")
-    except Exception as e:
+                    await message.answer("❌ Please share your location first to register.")
+    except Exception:
         await message.answer("⚠️ Connection to server failed.")
 
 # handling dynamic status updates
@@ -129,10 +117,15 @@ async def update_status_menu(message: types.Message):
     await message.answer("Select your current operational status:", reply_markup=get_status_keyboard())
 
 @dp.callback_query(F.data.startswith("status_"))
-async def process_status_callback(callback: types.CallbackQuery):
+async def process_status_callback(callback: types.CallbackQuery, state: FSMContext):
+    if callback.data == "status_Issue":
+        await callback.message.edit_text("🚨 Please describe the issue briefly (or send a voice message):")
+        await state.set_state(AppState.waiting_for_issue_text)
+        await callback.answer()
+        return
+
     new_status = callback.data.split("_")[1]
     payload = {"telegram_id": str(callback.from_user.id), "status": new_status}
-    
     try:
         async with aiohttp.ClientSession() as session:
             await session.post(SERVER_URL, json=payload)
@@ -140,12 +133,21 @@ async def process_status_callback(callback: types.CallbackQuery):
     except Exception:
         await callback.answer("❌ Server error", show_alert=True)
 
+@dp.message(AppState.waiting_for_issue_text, F.text)
+async def process_issue_text(message: types.Message, state: FSMContext):
+    payload = {"telegram_id": str(message.from_user.id), "issue_text": message.text}
+    try:
+        async with aiohttp.ClientSession() as session:
+            await session.post(ISSUE_URL, json=payload)
+        await message.answer("🚨 Issue reported. Awaiting dispatcher response.", reply_markup=get_main_keyboard())
+    except Exception:
+        await message.answer("❌ Failed to send issue report.")
+    await state.clear()
+
 # handling shift reset request asynchronously
 @dp.message(F.text == "🏁 Reset Shift")
 async def handle_reset(message: types.Message, state: FSMContext):
-    tg_id = message.from_user.id
-    payload = {"telegram_id": str(tg_id)}
-    
+    payload = {"telegram_id": str(message.from_user.id)}
     try:
         async with aiohttp.ClientSession() as session:
             async with session.post(RESET_URL, json=payload) as resp:
@@ -155,27 +157,19 @@ async def handle_reset(message: types.Message, state: FSMContext):
                     await state.clear()
                 else:
                     await message.answer("❌ Failed to reset shift.")
-    except Exception as e:
+    except Exception:
         await message.answer("⚠️ Error connecting to server.")
 
 # handling initial location stream attachment
 @dp.message(F.location)
 async def handle_location(message: types.Message, state: FSMContext):
     is_live = bool(message.location.live_period)
-    lat = message.location.latitude
-    lng = message.location.longitude
+    lat, lng = message.location.latitude, message.location.longitude
     tg_id = message.from_user.id
     current_state = await state.get_state()
     
-    # save locally so we can attach it to photos later
     user_locations[tg_id] = {"lat": lat, "lng": lng}
-    
-    payload = {
-        "telegram_id": str(tg_id),
-        "lat": lat,
-        "lng": lng,
-        "is_tracking": is_live
-    }
+    payload = {"telegram_id": str(tg_id), "lat": lat, "lng": lng, "is_tracking": is_live}
     
     if current_state == AppState.waiting_for_live_location.state:
         if not is_live:
@@ -187,11 +181,11 @@ async def handle_location(message: types.Message, state: FSMContext):
             async with aiohttp.ClientSession() as session:
                 async with session.post(SERVER_URL, json=payload) as resp:
                     if resp.status == 200:
-                        logging.info(f"Shift initialized and location updated for {tg_id}")
+                        logging.info(f"Shift initialized for {tg_id}")
                         await message.answer("✅ <b>Live tracking locked!</b> Shift controls are now available.", parse_mode="HTML", reply_markup=get_main_keyboard())
                         await state.clear()
-        except Exception as e:
-            logging.error(f"Connection failed: {e}")
+        except Exception:
+            logging.error("Connection failed during init")
     else:
         try:
             async with aiohttp.ClientSession() as session:
@@ -204,34 +198,23 @@ async def handle_location(message: types.Message, state: FSMContext):
 async def handle_live_updates(message: types.Message):
     is_live = bool(message.location.live_period)
     tg_id = message.from_user.id
-    
     user_locations[tg_id] = {"lat": message.location.latitude, "lng": message.location.longitude}
-    
-    payload = {
-        "telegram_id": str(tg_id),
-        "lat": message.location.latitude,
-        "lng": message.location.longitude,
-        "is_tracking": is_live
-    }
-    
+    payload = {"telegram_id": str(tg_id), "lat": message.location.latitude, "lng": message.location.longitude, "is_tracking": is_live}
     try:
         async with aiohttp.ClientSession() as session:
             await session.post(SERVER_URL, json=payload)
     except Exception:
         pass
-        
     if not is_live:
         await message.answer("🛑 <b>Live tracking stopped.</b> The dispatcher has been notified.", parse_mode="HTML")
 
 # handling FSM for visual anchors (step 1)
 @dp.message(F.text == "📸 Add Visual Anchor")
 async def start_anchor(message: types.Message, state: FSMContext):
-    tg_id = message.from_user.id
-    if tg_id not in user_locations:
+    if message.from_user.id not in user_locations:
         await message.answer("❌ Please start Live Tracking first to record the anchor coordinates.")
         return
-        
-    await message.answer("📸 Step 1: Send a photo of the area (gate, container, or issue).")
+    await message.answer("📸 Step 1: Send a photo of the area (gate, container, or issue).", reply_markup=ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="❌ Cancel")]], resize_keyboard=True))
     await state.set_state(AnchorState.waiting_for_photo)
 
 # handling photo uploads for visual anchors (step 2)
@@ -246,42 +229,82 @@ async def process_anchor_photo(message: types.Message, state: FSMContext):
 async def process_anchor_desc(message: types.Message, state: FSMContext):
     tg_id = message.from_user.id
     d = await state.get_data()
-    
-    payload = {
-        "telegram_id": str(tg_id),
-        "lat": user_locations[tg_id]["lat"],
-        "lng": user_locations[tg_id]["lng"],
-        "photo_id": d.get("photo_id"),
-        "note": message.text
-    }
-    
+    payload = {"telegram_id": str(tg_id), "lat": user_locations[tg_id]["lat"], "lng": user_locations[tg_id]["lng"], "photo_id": d.get("photo_id"), "note": message.text}
     try:
         async with aiohttp.ClientSession() as session:
             async with session.post(ANCHOR_URL, json=payload) as resp:
                 if resp.status == 200:
-                    await message.answer("✅ Visual anchor successfully saved to dispatcher dashboard.")
+                    await message.answer("✅ Visual anchor successfully saved to dispatcher dashboard.", reply_markup=get_main_keyboard())
                 else:
-                    await message.answer("❌ Failed to save anchor on server.")
-    except Exception as e:
-        await message.answer("⚠️ Error connecting to server.")
+                    await message.answer("❌ Failed to save anchor on server.", reply_markup=get_main_keyboard())
+    except Exception:
+        await message.answer("⚠️ Error connecting to server.", reply_markup=get_main_keyboard())
     finally:
         await state.clear()
 
-# safety feature - handling emergency button
+# handling safety timer logic for blind zones
+@dp.message(F.text == "⛰️ Safety Timer")
+async def start_safety_timer(message: types.Message, state: FSMContext):
+    kb = ReplyKeyboardMarkup(keyboard=[
+        [KeyboardButton(text="1 hour"), KeyboardButton(text="2 hours")], 
+        [KeyboardButton(text="⏱️ Custom time (mins)")],
+        [KeyboardButton(text="🛑 Disable Timer"), KeyboardButton(text="❌ Cancel")]
+    ], resize_keyboard=True)
+    await message.answer("⚠️ Entering a blind zone?\nSelect a safety timeout duration:", reply_markup=kb)
+
+@dp.message(F.text == "⏱️ Custom time (mins)")
+async def ask_custom_time(message: types.Message, state: FSMContext):
+    await message.answer("Enter duration in minutes (e.g., 45):", reply_markup=ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="❌ Cancel")]], resize_keyboard=True))
+    await state.set_state(SafetyState.waiting_for_custom_time)
+
+@dp.message(SafetyState.waiting_for_custom_time, F.text)
+async def process_custom_time(message: types.Message, state: FSMContext):
+    try:
+        minutes = int(message.text.strip())
+        payload = {"telegram_id": str(message.from_user.id), "action": "start", "minutes": minutes}
+        async with aiohttp.ClientSession() as session:
+            await session.post(SAFETY_URL, json=payload)
+        await message.answer(f"⏳ Safety timer set for {minutes} minutes!", reply_markup=get_main_keyboard())
+        await state.clear()
+    except ValueError:
+        await message.answer("❌ Invalid format. Please enter a number (e.g., 30):")
+
+@dp.message(F.text.in_(["1 hour", "2 hours", "🛑 Disable Timer"]))
+async def process_standard_timer(message: types.Message):
+    if message.text == "🛑 Disable Timer":
+        payload = {"telegram_id": str(message.from_user.id), "action": "stop"}
+        msg = "✅ Safety timer disabled."
+    else:
+        hours = int(message.text.split()[0])
+        payload = {"telegram_id": str(message.from_user.id), "action": "start", "hours": hours}
+        msg = f"⏳ Safety timer launched for {hours} hour(s)!"
+    try:
+        async with aiohttp.ClientSession() as session:
+            await session.post(SAFETY_URL, json=payload)
+        await message.answer(msg, reply_markup=get_main_keyboard())
+    except Exception:
+        await message.answer("❌ Server error.")
+
+# safety feature - handling voice reports and emergency button
+@dp.message(F.voice)
+async def handle_voice_message(message: types.Message):
+    payload = {"telegram_id": str(message.from_user.id), "voice_id": message.voice.file_id}
+    try:
+        async with aiohttp.ClientSession() as session:
+            await session.post(VOICE_URL, json=payload)
+        await message.answer("🎙️ Voice report delivered to dispatcher.", reply_markup=get_main_keyboard())
+    except Exception:
+        await message.answer("❌ Failed to send voice report.")
+
 @dp.message(F.text == "⚠️ SOS / Issue")
 async def handle_emergency(message: types.Message):
-    tg_id = message.from_user.id
-    payload = {"telegram_id": str(tg_id)}
-    
-    # Fire and forget request for SOS
+    payload = {"telegram_id": str(message.from_user.id)}
     try:
         async with aiohttp.ClientSession() as session:
             await session.post(EMERGENCY_URL, json=payload)
-    except Exception as e:
-        logging.error(f"Failed to alert server: {e}")
-        
-    await message.answer("🚨 EMERGENCY SIGNAL SENT to dispatcher. Please stay calm, we are recording your last known location.")
-    logging.warning(f"!!! EMERGENCY ALERT TRIGGERED BY USER {tg_id} !!!")
+    except Exception:
+        pass
+    await message.answer("🚨 EMERGENCY SIGNAL SENT to dispatcher. Please stay calm.")
 
 # fallback handler for any unrecognized text or media
 @dp.message()
@@ -290,7 +313,6 @@ async def handle_unrecognized(message: types.Message):
 
 async def main():
     logging.info("Starting bot...")
-    # Drop pending updates to avoid processing old locations if bot was offline
     await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
 
