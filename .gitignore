@@ -8,4 +8,4 @@ orienttrack.db
 
 # System files
 .DS_Store
-.env
+.envsystem.log
