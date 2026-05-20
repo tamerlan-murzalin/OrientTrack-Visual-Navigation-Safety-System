@@ -17,6 +17,7 @@ SETNAME_URL = f"{config.SERVER_URL}/api/update_name"
 RESET_URL = f"{config.SERVER_URL}/api/reset_route"
 ISSUE_URL = f"{config.SERVER_URL}/api/issue"
 VOICE_URL = f"{config.SERVER_URL}/api/voice"
+CHAT_RECEIVE_URL = f"{config.SERVER_URL}/api/chat_receive"
 SAFETY_URL = f"{config.SERVER_URL}/api/safety"
 
 logging.basicConfig(level=logging.INFO)
@@ -39,6 +40,13 @@ class AnchorState(StatesGroup):
 
 class SafetyState(StatesGroup):
     waiting_for_custom_time = State()
+
+# menu buttons to filter out from issue and free text handlers
+menu_buttons = [
+    "🔄 Update Status", "⛰️ Safety Timer", "📸 Add Visual Anchor", 
+    "⚠️ SOS / Issue", "🏁 Reset Shift", "❌ Cancel", 
+    "1 hour", "2 hours", "🛑 Disable Timer", "⏱️ Custom time (mins)"
+]
 
 # building dynamic keyboards for the workflow
 def get_start_keyboard():
@@ -136,7 +144,7 @@ async def process_status_callback(callback: types.CallbackQuery, state: FSMConte
     except Exception:
         await callback.answer("❌ Server connection failed", show_alert=True)
 
-@dp.message(AppState.waiting_for_issue_text, F.text)
+@dp.message(AppState.waiting_for_issue_text, F.text, ~F.text.in_(menu_buttons))
 async def process_issue_text(message: types.Message, state: FSMContext):
     payload = {"telegram_id": str(message.from_user.id), "issue_text": message.text}
     try:
@@ -196,10 +204,10 @@ async def handle_location(message: types.Message, state: FSMContext):
                         await message.answer("✅ <b>Live tracking locked!</b> Shift controls are now available.", parse_mode="HTML", reply_markup=get_main_keyboard())
                         await state.clear()
                     else:
-                        await message.answer("❌ The server rejected the request. Please check if the dispatcher system is running.")
+                        await message.answer("❌ The server rejected the request.")
         except Exception as e:
             logging.error(f"Connection failed during init: {e}")
-            await message.answer("⚠️ Could not connect to the server. Make sure your app.py is running.")
+            await message.answer("⚠️ Could not connect to the server.")
     else:
         try:
             async with aiohttp.ClientSession() as session:
@@ -239,7 +247,7 @@ async def process_anchor_photo(message: types.Message, state: FSMContext):
     await state.set_state(AnchorState.waiting_for_description)
 
 # handling description for visual anchors (step 3)
-@dp.message(AnchorState.waiting_for_description, F.text)
+@dp.message(AnchorState.waiting_for_description, F.text, ~F.text.in_(menu_buttons))
 async def process_anchor_desc(message: types.Message, state: FSMContext):
     tg_id = message.from_user.id
     d = await state.get_data()
@@ -258,7 +266,7 @@ async def process_anchor_desc(message: types.Message, state: FSMContext):
 
 # handling safety timer logic for blind zones
 @dp.message(F.text == "⛰️ Safety Timer")
-async def start_safety_timer(message: types.Message, state: FSMContext):
+async def start_safety_timer(message: types.Message):
     kb = ReplyKeyboardMarkup(keyboard=[
         [KeyboardButton(text="1 hour"), KeyboardButton(text="2 hours")], 
         [KeyboardButton(text="⏱️ Custom time (mins)")],
@@ -271,54 +279,45 @@ async def ask_custom_time(message: types.Message, state: FSMContext):
     await message.answer("Enter duration in minutes (e.g., 45):", reply_markup=ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="❌ Cancel")]], resize_keyboard=True))
     await state.set_state(SafetyState.waiting_for_custom_time)
 
-@dp.message(SafetyState.waiting_for_custom_time, F.text)
+@dp.message(SafetyState.waiting_for_custom_time, F.text, ~F.text.in_(menu_buttons))
 async def process_custom_time(message: types.Message, state: FSMContext):
     try:
         minutes = int(message.text.strip())
-        payload = {"telegram_id": str(message.from_user.id), "action": "start", "minutes": minutes}
         async with aiohttp.ClientSession() as session:
-            await session.post(SAFETY_URL, json=payload)
+            await session.post(SAFETY_URL, json={"telegram_id": str(message.from_user.id), "action": "start", "minutes": minutes})
         await message.answer(f"⏳ Safety timer set for {minutes} minutes!", reply_markup=get_main_keyboard())
         await state.clear()
     except ValueError:
-        await message.answer("❌ Invalid format. Please enter a number (e.g., 30):")
+        await message.answer("❌ Invalid format.")
 
 @dp.message(F.text.in_(["1 hour", "2 hours", "🛑 Disable Timer"]))
 async def process_standard_timer(message: types.Message):
-    if message.text == "🛑 Disable Timer":
-        payload = {"telegram_id": str(message.from_user.id), "action": "stop"}
-        msg = "✅ Safety timer disabled."
-    else:
-        hours = int(message.text.split()[0])
-        payload = {"telegram_id": str(message.from_user.id), "action": "start", "hours": hours}
-        msg = f"⏳ Safety timer launched for {hours} hour(s)!"
-    try:
-        async with aiohttp.ClientSession() as session:
-            await session.post(SAFETY_URL, json=payload)
-        await message.answer(msg, reply_markup=get_main_keyboard())
-    except Exception:
-        await message.answer("❌ Server error.")
+    action = "stop" if message.text == "🛑 Disable Timer" else "start"
+    hours = 0 if action == "stop" else int(message.text.split()[0])
+    async with aiohttp.ClientSession() as session:
+        await session.post(SAFETY_URL, json={"telegram_id": str(message.from_user.id), "action": action, "hours": hours})
+    await message.answer("✅ Timer updated.", reply_markup=get_main_keyboard())
 
-# safety feature - handling voice reports and emergency button
+# safety feature - handling voice reports
 @dp.message(F.voice)
-async def handle_voice_message(message: types.Message):
-    payload = {"telegram_id": str(message.from_user.id), "voice_id": message.voice.file_id}
-    try:
-        async with aiohttp.ClientSession() as session:
-            await session.post(VOICE_URL, json=payload)
-        await message.answer("🎙️ Voice report delivered to dispatcher.", reply_markup=get_main_keyboard())
-    except Exception:
-        await message.answer("❌ Failed to send voice report.")
+async def handle_voice_chat(message: types.Message, state: FSMContext):
+    async with aiohttp.ClientSession() as session:
+        await session.post(CHAT_RECEIVE_URL, json={"telegram_id": str(message.from_user.id), "voice_id": message.voice.file_id})
+    await message.answer("🎙️ Voice delivered.")
+    await state.clear()
+
+# handling driver free-text chat to dispatcher
+@dp.message(F.text, ~F.text.in_(menu_buttons))
+async def handle_free_text_chat(message: types.Message):
+    async with aiohttp.ClientSession() as session:
+        await session.post(CHAT_RECEIVE_URL, json={"telegram_id": str(message.from_user.id), "text": message.text})
+    await message.answer("💬 Message sent to dispatcher.")
 
 @dp.message(F.text == "⚠️ SOS / Issue")
 async def handle_emergency(message: types.Message):
-    payload = {"telegram_id": str(message.from_user.id)}
-    try:
-        async with aiohttp.ClientSession() as session:
-            await session.post(EMERGENCY_URL, json=payload)
-    except Exception:
-        pass
-    await message.answer("🚨 EMERGENCY SIGNAL SENT to dispatcher. Please stay calm.")
+    async with aiohttp.ClientSession() as session:
+        await session.post(EMERGENCY_URL, json={"telegram_id": str(message.from_user.id)})
+    await message.answer("🚨 EMERGENCY SIGNAL SENT.")
 
 # fallback handler for any unrecognized text or media
 @dp.message()

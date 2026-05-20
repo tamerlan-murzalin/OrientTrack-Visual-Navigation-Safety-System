@@ -7,6 +7,7 @@ import logging
 import requests
 import csv
 import io
+import time
 import traceback
 
 logging.basicConfig(
@@ -21,6 +22,7 @@ app.config['SQLALCHEMY_DATABASE_URI'] = config.SQLALCHEMY_DATABASE_URI
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
 
+# database models for tracking
 class Driver(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     telegram_id = db.Column(db.String(50), unique=True, nullable=False)
@@ -49,13 +51,40 @@ class AnchorPoint(db.Model):
     note = db.Column(db.String(255))
     timestamp = db.Column(db.DateTime, default=datetime.utcnow)
 
-class ArchivedRoute(db.Model):
+class Message(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     driver_id = db.Column(db.Integer, db.ForeignKey('driver.id'))
-    lat = db.Column(db.Float, nullable=False)
-    lng = db.Column(db.Float, nullable=False)
+    sender = db.Column(db.String(50)) 
+    text = db.Column(db.Text, nullable=True)
+    voice_id = db.Column(db.String(100), nullable=True)
+    timestamp = db.Column(db.DateTime, default=datetime.utcnow)
+
+# archived models with shift_id for grouping
+class ArchivedRoute(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    shift_id = db.Column(db.String(100))
+    driver_id = db.Column(db.Integer)
+    driver_name = db.Column(db.String(100))
+    lat = db.Column(db.Float)
+    lng = db.Column(db.Float)
     timestamp = db.Column(db.DateTime)
-    archived_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+class ArchivedAnchor(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    shift_id = db.Column(db.String(100))
+    lat = db.Column(db.Float)
+    lng = db.Column(db.Float)
+    photo_id = db.Column(db.String(100)) 
+    note = db.Column(db.String(255))
+    timestamp = db.Column(db.DateTime)
+
+class ArchivedMessage(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    shift_id = db.Column(db.String(100))
+    sender = db.Column(db.String(50)) 
+    text = db.Column(db.Text)
+    voice_id = db.Column(db.String(100))
+    timestamp = db.Column(db.DateTime)
 
 with app.app_context():
     db.create_all()
@@ -80,7 +109,7 @@ def update_location():
 
         if status:
             driver.status = status
-            if "Issue" not in driver.status and "Проблема" not in driver.status:
+            if "Issue" not in driver.status and "SOS" not in driver.status:
                 driver.issue_text = None
         elif driver.status == 'Offline':
             driver.status = 'Active'
@@ -163,6 +192,8 @@ def receive_issue():
             driver.status = "Issue Reported"
             driver.issue_text = data.get('issue_text')
             driver.last_update = datetime.utcnow()
+            msg = Message(driver_id=driver.id, sender="driver", text=f"🚨 ISSUE: {data.get('issue_text')}")
+            db.session.add(msg)
             db.session.commit()
             return jsonify({"status": "success"}), 200
         return jsonify({"error": "driver not found"}), 404
@@ -176,9 +207,8 @@ def receive_voice():
         data = request.json
         driver = Driver.query.filter_by(telegram_id=str(data.get('telegram_id'))).first()
         if driver:
-            driver.status = "Issue (Voice Report)"
-            driver.issue_text = "🎙️ Voice message received"
-            driver.last_update = datetime.utcnow()
+            msg = Message(driver_id=driver.id, sender="driver", text=data.get('text'), voice_id=data.get('voice_id'))
+            db.session.add(msg)
             db.session.commit()
             return jsonify({"status": "success"}), 200
         return jsonify({"error": "driver not found"}), 404
@@ -195,17 +225,54 @@ def reply_issue():
             url = f"https://api.telegram.org/bot{config.TELEGRAM_TOKEN}/sendMessage"
             payload = {
                 "chat_id": driver.telegram_id, 
-                "text": f"👨‍💻 <b>Message from dispatcher:</b>\n{data.get('message')}", 
+                "text": f"👨‍💻 <b>Dispatcher:</b>\n{data.get('message')}", 
                 "parse_mode": "HTML"
             }
             requests.post(url, json=payload)
-            driver.issue_text = None
-            driver.status = "Active (Issue Addressed)"
+            msg = Message(driver_id=driver.id, sender="dispatcher", text=data.get('message'))
+            db.session.add(msg)
             db.session.commit()
             return jsonify({"status": "success"}), 200
         return jsonify({"error": "bad request"}), 400
     except Exception as e:
         return jsonify({"error": "Internal server error"}), 500
+
+# chat endpoint for messages
+@app.route('/api/chat_receive', methods=['POST'])
+def chat_receive():
+    try:
+        data = request.json
+        driver = Driver.query.filter_by(telegram_id=str(data.get('telegram_id'))).first()
+        if driver:
+            msg = Message(driver_id=driver.id, sender="driver", text=data.get('text'), voice_id=data.get('voice_id'))
+            db.session.add(msg)
+            db.session.commit()
+            return jsonify({"status": "success"}), 200
+        return jsonify({"error": "not found"}), 404
+    except Exception:
+        return jsonify({"error": "error"}), 500
+
+@app.route('/api/chat_send', methods=['POST'])
+def chat_send():
+    try:
+        data = request.json
+        driver = Driver.query.get(data.get('driver_id'))
+        if driver and data.get('text'):
+            url = f"https://api.telegram.org/bot{config.TELEGRAM_TOKEN}/sendMessage"
+            requests.post(url, json={"chat_id": driver.telegram_id, "text": f"👨‍💻 <b>Dispatcher:</b>\n{data.get('text')}", "parse_mode": "HTML"})
+            msg = Message(driver_id=driver.id, sender="dispatcher", text=data.get('text'))
+            db.session.add(msg)
+            db.session.commit()
+            return jsonify({"status": "success"}), 200
+        return jsonify({"error": "bad request"}), 400
+    except Exception:
+        return jsonify({"error": "error"}), 500
+
+@app.route('/api/get_chat/<int:driver_id>', methods=['GET'])
+def get_chat(driver_id):
+    messages = Message.query.filter_by(driver_id=driver_id).order_by(Message.timestamp.asc()).all()
+    res = [{"sender": m.sender, "text": m.text, "voice_id": m.voice_id, "time": m.timestamp.isoformat() + "Z"} for m in messages]
+    return jsonify(res), 200
 
 # handling safety timer logic
 @app.route('/api/safety', methods=['POST'])
@@ -231,24 +298,32 @@ def manage_safety():
 def reset_route():
     try:
         data = request.json
-        tg_id = str(data.get('telegram_id'))
-        driver = Driver.query.filter_by(telegram_id=tg_id).first()
+        driver = Driver.query.filter_by(telegram_id=str(data.get('telegram_id'))).first()
         if not driver:
-            return jsonify({"error": "driver not found"}), 404
+            return jsonify({"error": "not found"}), 404
             
-        current_points = RoutePoint.query.filter_by(driver_id=driver.id).all()
-        for p in current_points:
-            archive_point = ArchivedRoute(driver_id=p.driver_id, lat=p.lat, lng=p.lng, timestamp=p.timestamp)
-            db.session.add(archive_point)
+        shift_id = f"shift_{driver.id}_{int(time.time())}"
+        
+        for p in RoutePoint.query.filter_by(driver_id=driver.id).all():
+            db.session.add(ArchivedRoute(shift_id=shift_id, driver_id=driver.id, driver_name=driver.name, lat=p.lat, lng=p.lng, timestamp=p.timestamp))
+        for a in AnchorPoint.query.filter_by(driver_id=driver.id).all():
+            db.session.add(ArchivedAnchor(shift_id=shift_id, lat=a.lat, lng=a.lng, photo_id=a.photo_id, note=a.note, timestamp=a.timestamp))
+        for m in Message.query.filter_by(driver_id=driver.id).all():
+            db.session.add(ArchivedMessage(shift_id=shift_id, sender=m.sender, text=m.text, voice_id=m.voice_id, timestamp=m.timestamp))
             
         RoutePoint.query.filter_by(driver_id=driver.id).delete()
+        AnchorPoint.query.filter_by(driver_id=driver.id).delete()
+        Message.query.filter_by(driver_id=driver.id).delete()
+        
         driver.status = 'Offline'
         driver.is_tracking = False
         driver.safety_timer_end = None
+        driver.issue_text = None 
         db.session.commit()
-        return jsonify({"status": "route reset"}), 200
+        return jsonify({"status": "archived"}), 200
     except Exception as e:
-        return jsonify({"error": "Internal server error"}), 500
+        logging.error(f"Archive error: {e}")
+        return jsonify({"error": "error"}), 500
 
 # endpoint to save visual anchors
 @app.route('/api/add_anchor', methods=['POST'])
@@ -257,22 +332,21 @@ def add_anchor():
         data = request.json
         tg_id = str(data.get('telegram_id'))
         driver = Driver.query.filter_by(telegram_id=tg_id).first()
-        if not driver:
-            return jsonify({"error": "driver not found"}), 404
-            
-        anchor = AnchorPoint(
-            driver_id=driver.id,
-            lat=data.get('lat'),
-            lng=data.get('lng'),
-            photo_id=data.get('photo_id'),
-            note=data.get('note', 'Visual anchor')
-        )
-        db.session.add(anchor)
-        driver.status = 'At Anchor'
-        db.session.commit()
-        return jsonify({"status": "anchor saved"}), 200
-    except Exception as e:
-        return jsonify({"error": "Internal server error"}), 500
+        if driver:
+            anchor = AnchorPoint(
+                driver_id=driver.id,
+                lat=data.get('lat'),
+                lng=data.get('lng'),
+                photo_id=data.get('photo_id'),
+                note=data.get('note', 'Visual anchor')
+            )
+            db.session.add(anchor)
+            driver.status = 'At Anchor'
+            db.session.commit()
+            return jsonify({"status": "saved"}), 200
+        return jsonify({"error": "not found"}), 404
+    except Exception:
+        return jsonify({"error": "error"}), 500
 
 # api for the frontend dashboard to fetch active drivers
 @app.route('/api/get_drivers', methods=['GET'])
@@ -296,12 +370,12 @@ def get_drivers():
                         remaining = d.safety_timer_end - now
                         if remaining.total_seconds() < 0:
                             safety_status = "alarm"
-                            safety_text = "⚠️ NO SIGNAL: TIMER EXPIRED!"
+                            safety_text = "⚠️ TIMER EXPIRED!"
                         else:
                             safety_status = "active"
                             hours, remainder = divmod(remaining.total_seconds(), 3600)
                             mins, _ = divmod(remainder, 60)
-                            safety_text = f"⏳ Safety Timer: {int(hours)}h {int(mins)}m"
+                            safety_text = f"⏳ Timer: {int(hours)}h {int(mins)}m"
                     else:
                         if d.last_update and (now - d.last_update).total_seconds() > config.SAFETY_TIMEOUT_SECONDS:
                             if current_status not in ['At Anchor', 'SOS / Emergency']:
@@ -326,79 +400,59 @@ def get_drivers():
         logging.error(f"Error fetching drivers: {e}")
         return jsonify({"error": "Failed to fetch drivers"}), 500
 
-# api to fetch the full breadcrumb trail
-@app.route('/api/get_route/<int:driver_id>', methods=['GET'])
-def get_route(driver_id):
-    try:
-        points = RoutePoint.query.filter_by(driver_id=driver_id).order_by(RoutePoint.timestamp.asc()).all()
-        result = []
-        for p in points:
-            result.append({
-                "lat": p.lat,
-                "lng": p.lng,
-                "time": p.timestamp.isoformat() + "Z"
-            })
-        return jsonify(result), 200
-    except Exception as e:
-        return jsonify([]), 500
-
 # api to fetch visual anchors for the map
 @app.route('/api/get_anchors', methods=['GET'])
 def get_anchors():
-    try:
-        anchors = AnchorPoint.query.all()
-        result = []
-        for a in anchors:
-            result.append({
-                "id": a.id,
-                "driver_id": a.driver_id,
-                "lat": a.lat,
-                "lng": a.lng,
-                "note": a.note,
-                "photo_id": a.photo_id
-            })
-        return jsonify(result), 200
-    except Exception as e:
-        return jsonify([]), 500
+    anchors = AnchorPoint.query.all()
+    return jsonify([{"id": a.id, "driver_id": a.driver_id, "lat": a.lat, "lng": a.lng, "note": a.note, "photo_id": a.photo_id} for a in anchors]), 200
 
-# endpoint to fetch and proxy photos from telegram
-@app.route('/api/get_photo/<string:photo_id>', methods=['GET'])
-def get_photo(photo_id):
+# fetches historical shifts for the analytics dropdown
+@app.route('/api/get_archived_shifts', methods=['GET'])
+def get_archived_shifts():
+    shifts = db.session.query(ArchivedRoute.shift_id, ArchivedRoute.driver_name, db.func.min(ArchivedRoute.timestamp).label('start')).group_by(ArchivedRoute.shift_id, ArchivedRoute.driver_name).order_by(db.desc('start')).all()
+    return jsonify([{"shift_id": s.shift_id, "driver_name": s.driver_name, "date": s.start.strftime("%Y-%m-%d %H:%M")} for s in shifts]), 200
+
+# fetches all historical data (route, anchors, chat) for a specific shift
+@app.route('/api/get_shift_history/<string:shift_id>', methods=['GET'])
+def get_shift_history(shift_id):
+    routes = ArchivedRoute.query.filter_by(shift_id=shift_id).order_by(ArchivedRoute.timestamp.asc()).all()
+    anchors = ArchivedAnchor.query.filter_by(shift_id=shift_id).all()
+    chats = ArchivedMessage.query.filter_by(shift_id=shift_id).order_by(ArchivedMessage.timestamp.asc()).all()
+    
+    return jsonify({
+        "route": [{"lat": r.lat, "lng": r.lng} for r in routes],
+        "anchors": [{"lat": a.lat, "lng": a.lng, "note": a.note, "photo_id": a.photo_id} for a in anchors],
+        "chat": [{"sender": c.sender, "text": c.text, "voice_id": c.voice_id, "time": c.timestamp.isoformat() + "Z"} for c in chats]
+    }), 200
+
+# universal media fetcher (photos and voice) proxying from telegram
+@app.route('/api/get_file/<string:file_id>', methods=['GET'])
+def get_file(file_id):
     try:
-        url = f"https://api.telegram.org/bot{config.TELEGRAM_TOKEN}/getFile?file_id={photo_id}"
+        url = f"https://api.telegram.org/bot{config.TELEGRAM_TOKEN}/getFile?file_id={file_id}"
         resp = requests.get(url).json()
         if resp.get("ok"):
             file_path = resp["result"]["file_path"]
             return redirect(f"https://api.telegram.org/file/bot{config.TELEGRAM_TOKEN}/{file_path}")
-        return jsonify({"error": "Photo not found"}), 404
-    except Exception as e:
-        return jsonify({"error": "Internal server error"}), 500
+        return jsonify({"error": "File not found"}), 404
+    except Exception:
+        return jsonify({"error": "server error"}), 500
 
 # endpoint to export archived routes as CSV
 @app.route('/api/export_routes', methods=['GET'])
 def export_routes():
-    try:
-        si = io.StringIO()
-        cw = csv.writer(si)
-        cw.writerow(['driver_id', 'lat', 'lng', 'timestamp', 'archived_at'])
-        records = ArchivedRoute.query.all()
-        for r in records:
-            cw.writerow([
-                r.driver_id, 
-                r.lat, 
-                r.lng, 
-                r.timestamp.isoformat() + "Z" if r.timestamp else '', 
-                r.archived_at.isoformat() + "Z" if r.archived_at else ''
-            ])
-        output = Response(si.getvalue(), mimetype='text/csv')
-        output.headers["Content-Disposition"] = "attachment; filename=archived_routes.csv"
-        return output
-    except Exception as e:
-        return jsonify({"error": "Internal server error"}), 500
+    si = io.StringIO()
+    cw = csv.writer(si)
+    cw.writerow(['shift_id', 'driver_name', 'lat', 'lng', 'timestamp'])
+    for r in ArchivedRoute.query.all():
+        cw.writerow([r.shift_id, r.driver_name, r.lat, r.lng, r.timestamp.isoformat() + "Z" if r.timestamp else ''])
+    output = Response(si.getvalue(), mimetype='text/csv')
+    output.headers["Content-Disposition"] = "attachment; filename=archived_routes.csv"
+    return output
 
 @app.route('/')
 def index():
     return render_template('index.html')
 
 if __name__ == '__main__':
-    app.run(debug=True, port=config.SERVER_PORT)
+    app.run(debug=True, host=config.SERVER_HOST, port=config.SERVER_PORT)
