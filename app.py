@@ -111,8 +111,6 @@ def update_location():
             driver.status = status
             if "Issue" not in driver.status and "SOS" not in driver.status:
                 driver.issue_text = None
-        elif driver.status == 'Offline':
-            driver.status = 'Active'
 
         if is_tracking is not None:
             driver.is_tracking = bool(is_tracking)
@@ -404,7 +402,10 @@ def get_drivers():
 @app.route('/api/get_anchors', methods=['GET'])
 def get_anchors():
     anchors = AnchorPoint.query.all()
-    return jsonify([{"id": a.id, "driver_id": a.driver_id, "lat": a.lat, "lng": a.lng, "note": a.note, "photo_id": a.photo_id} for a in anchors]), 200
+    archived = ArchivedAnchor.query.all()
+    res = [{"id": a.id, "driver_id": a.driver_id, "lat": a.lat, "lng": a.lng, "note": a.note, "photo_id": a.photo_id} for a in anchors]
+    res.extend([{"id": f"arch_{a.id}", "driver_id": "archived", "lat": a.lat, "lng": a.lng, "note": a.note, "photo_id": a.photo_id} for a in archived])
+    return jsonify(res), 200
 
 # fetches historical shifts for the analytics dropdown
 @app.route('/api/get_archived_shifts', methods=['GET'])

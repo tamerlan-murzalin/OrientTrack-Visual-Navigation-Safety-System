@@ -228,6 +228,15 @@ async def handle_live_updates(message: types.Message):
     except Exception:
         pass
     if not is_live:
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(f"{STATUS_URL}/{tg_id}") as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        if data.get("status") == "Offline":
+                            return
+        except Exception:
+            pass
         await message.answer("🛑 <b>Live tracking stopped.</b> The dispatcher has been notified.", parse_mode="HTML")
 
 # handling FSM for visual anchors (step 1)
