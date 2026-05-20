@@ -68,6 +68,15 @@
 
         .btn-primary { padding: 10px 15px; background-color: #3498db; color: white; font-weight: bold; border: none; border-radius: 4px; cursor: pointer; transition: 0.2s; }
         .btn-primary:hover { background-color: #2980b9; }
+
+        /* Chat modal styles */
+        .chat-modal { display: none; position: fixed; right: 20px; bottom: 20px; width: 320px; height: 400px; background: white; border-radius: 8px; box-shadow: 0 5px 15px rgba(0,0,0,0.3); z-index: 2000; flex-direction: column; overflow: hidden; border: 1px solid #ddd; }
+        .chat-header { background: #2c3e50; color: white; padding: 10px 15px; display: flex; justify-content: space-between; font-weight: bold; }
+        .chat-box { flex: 1; padding: 10px; overflow-y: auto; background: #f9f9f9; display: flex; flex-direction: column; gap: 8px; }
+        .chat-msg { padding: 8px 12px; border-radius: 8px; font-size: 13px; max-width: 85%; word-wrap: break-word; }
+        .sender-dispatcher { background: #dcf8c6; align-self: flex-end; border-bottom-right-radius: 0; }
+        .sender-driver { background: #ffffff; border: 1px solid #ddd; align-self: flex-start; border-bottom-left-radius: 0; }
+        .chat-footer { padding: 10px; display: flex; gap: 5px; border-top: 1px solid #eee; background: white; }
     </style>
 </head>
 <body>
@@ -85,7 +94,6 @@
         <div class="top-bar">
             <h2 id="tab-title">Live Dispatcher Map</h2>
             <div style="display: flex; gap: 15px; align-items: center;">
-                <button onclick="window.location.href='/api/export_routes'" class="btn-primary" style="background-color: #2c3e50;">📥 Export CSV</button>
                 <div style="text-align: right;">
                     <span id="system-status" class="status-online">System Live</span>
                     <div id="last-update-time" style="font-size: 0.8em; color: #7f8c8d; margin-top: 5px;">Syncing...</div>
@@ -119,7 +127,7 @@
                 <h3>Detailed Fleet Overview</h3>
                 <table>
                     <thead>
-                        <tr><th>ID</th><th>Driver Name</th><th>Current Status</th><th>Last Seen</th><th>Location</th></tr>
+                        <tr><th>ID</th><th>Driver Name</th><th>Current Status</th><th>Last Seen</th><th>Location</th><th>Action</th></tr>
                     </thead>
                     <tbody id="drivers-table-body"></tbody>
                 </table>
@@ -134,15 +142,40 @@
         </div>
 
         <div id="analytics" class="tab-section">
-            <div class="panel">
+            <div class="panel" style="display: flex; flex-direction: column; height: calc(100vh - 120px);">
                 <h3>Historical Route Planning & Analytics</h3>
-                <p style="color: #7f8c8d; margin-bottom: 15px;">Select a driver to draw their active historical path on the map.</p>
-                <select id="analytics-driver-select" style="padding: 10px; width: 300px; border: 1px solid #bdc3c7; border-radius: 4px; margin-right: 10px;">
-                    <option value="">-- Loading drivers... --</option>
-                </select>
-                <button class="btn-primary" onclick="loadDriverRoute()">🗺️ Draw Route</button>
-                <button class="btn-primary" onclick="clearRoute()" style="background-color: #e74c3c;">🧹 Clear</button>
+                <p style="color: #7f8c8d; margin-bottom: 15px;">Select a completed shift to review route data and chat history.</p>
+                <div style="display: flex; gap: 10px; margin-bottom: 15px; align-items: center;">
+                    <select id="analytics-shift-select" style="padding: 10px; width: 300px; border: 1px solid #bdc3c7; border-radius: 4px;">
+                        <option value="">-- Loading shifts... --</option>
+                    </select>
+                    <button class="btn-primary" onclick="loadShiftHistory()">📊 Load Analytics</button>
+                    <button class="btn-primary" onclick="clearAnalytics()" style="background-color: #e74c3c;">🧹 Clear</button>
+                    <button onclick="window.location.href='/api/export_routes'" class="btn-primary" style="background-color: #2c3e50; margin-left: auto;">📥 Export CSV</button>
+                </div>
+                <div style="display: flex; gap: 15px; flex: 1;">
+                    <div id="analytics-map" class="map-container" style="flex: 2;"></div>
+                    <div style="flex: 1; border: 1px solid #ddd; border-radius: 8px; display: flex; flex-direction: column; background: white;">
+                        <div style="background: #2c3e50; color: white; padding: 10px; font-weight: bold; text-align: center; border-radius: 8px 8px 0 0;">Shift Chat Log</div>
+                        <div id="history-chat-box" style="flex: 1; padding: 10px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; background: #f9f9f9;">
+                            <p style="text-align:center; color:#999; font-size:12px; margin-top: 20px;">Load a shift to view chat history.</p>
+                        </div>
+                    </div>
+                </div>
             </div>
+        </div>
+    </div>
+
+    <div id="chat-modal" class="chat-modal">
+        <div class="chat-header">
+            <span id="chat-title">Chat</span>
+            <span onclick="closeChat()" style="cursor:pointer;">✖</span>
+        </div>
+        <div id="chat-box" class="chat-box"></div>
+        <div class="chat-footer">
+            <input type="hidden" id="active-chat-id">
+            <input type="text" id="chat-input" placeholder="Type a message..." style="flex:1; padding:5px; border: 1px solid #ddd; border-radius: 4px;" onkeypress="if(event.key === 'Enter') sendChatMsg()">
+            <button onclick="sendChatMsg()" class="btn-primary" style="padding: 5px 15px;">Send</button>
         </div>
     </div>
 
@@ -152,10 +185,14 @@
         var map = L.map('map').setView([43.2389, 76.8897], 11);
         L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(map);
 
+        var analyticsMap = L.map('analytics-map').setView([43.2389, 76.8897], 11);
+        L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(analyticsMap);
+
         var driverMarkers = {};
         var currentFilter = 'All';
-        var drawnPolyline = null;
+        var analyticsLayer = L.layerGroup().addTo(analyticsMap);
         var isFirstLoad = true; // Auto-centering flag
+        var chatInterval = null;
 
         const tabTitles = {
             'live-map': 'Live Dispatcher Map',
@@ -172,6 +209,10 @@
             el.classList.add('active');
             document.getElementById('tab-title').innerText = tabTitles[tabId];
             if(tabId === 'live-map') setTimeout(() => map.invalidateSize(), 100);
+            if(tabId === 'analytics') {
+                setTimeout(() => analyticsMap.invalidateSize(), 100);
+                fetchArchivedShifts();
+            }
         }
 
         // Apply list filter
@@ -209,7 +250,6 @@
                     updateMapSidebar(data);
                     updateMapMarkers(data);
                     updateDriversTable(data);
-                    updateAnalyticsDropdown(data);
                 })
                 .catch(err => {
                     document.getElementById('system-status').innerText = "Offline";
@@ -264,6 +304,7 @@
 
                     listHtml += `
                         <div class="${cardClass}" onclick="map.flyTo([${d.lat}, ${d.lng}], 15, {duration: 1.5});">
+                            <button onclick="event.stopPropagation(); openChat(${d.id}, '${d.name}')" style="float: right; background: #3498db; color: white; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 12px;">💬 Chat</button>
                             <b style="font-size: 16px;">${d.name}</b>
                             <div style="font-size: 13px; color: #555; margin-top: 2px;">Status: <b>${d.status}</b></div>
                             <div style="font-size: 12px; color: #7f8c8d; margin-top: 4px;">Last seen: ${timeText}</div>
@@ -339,6 +380,7 @@
                     <td><span style="padding: 4px 8px; border-radius: 4px; background: #e1f5fe; color: #0288d1; font-size: 12px; font-weight: bold;">${d.status}</span></td>
                     <td>${timeText}</td>
                     <td>${coords}</td>
+                    <td><button class="btn-primary" style="padding: 5px 10px; font-size: 12px;" onclick="openChat(${d.id}, '${d.name}')">💬 Chat</button></td>
                 </tr>`;
             });
         }
@@ -348,7 +390,7 @@
             let grid = document.getElementById('anchors-grid-container');
             grid.innerHTML = '';
             anchors.forEach(a => {
-                let imgHtml = a.photo_id ? `<img src="/api/get_photo/${a.photo_id}" class="anchor-img">` : `<div style="height:160px; background:#eee; margin-bottom:10px; display:flex; align-items:center; justify-content:center; color:#999;">No Image</div>`;
+                let imgHtml = a.photo_id ? `<img src="/api/get_file/${a.photo_id}" class="anchor-img">` : `<div style="height:160px; background:#eee; margin-bottom:10px; display:flex; align-items:center; justify-content:center; color:#999;">No Image</div>`;
                 grid.innerHTML += `
                     <div class="anchor-card">
                         ${imgHtml}
@@ -359,39 +401,98 @@
             });
         }
 
-        function updateAnalyticsDropdown(drivers) {
-            let select = document.getElementById('analytics-driver-select');
-            let val = select.value;
-            select.innerHTML = '<option value="">-- Select Driver --</option>';
-            drivers.forEach(d => {
-                select.innerHTML += `<option value="${d.id}" ${d.id==val?"selected":""}>#${d.id} - ${d.name}</option>`;
-            });
+        // Chat Modal Functions
+        function openChat(id, name) {
+            document.getElementById('active-chat-id').value = id;
+            document.getElementById('chat-title').innerText = "Chat: " + name;
+            document.getElementById('chat-modal').style.display = 'flex';
+            loadChatMessages(id);
+            if (chatInterval) clearInterval(chatInterval);
+            chatInterval = setInterval(() => loadChatMessages(id), 5000);
         }
 
-        // Draw historical route polyline
-        function loadDriverRoute() {
-            let driverId = document.getElementById('analytics-driver-select').value;
-            if(!driverId) return;
-            
-            fetch(`/api/get_route/${driverId}`)
-            .then(res => res.json())
-            .then(data => {
-                clearRoute();
-                if(data.length === 0) {
-                    alert("No route data found for this shift.");
-                    return;
-                }
-                var latlngs = data.map(point => [point.lat, point.lng]);
-                drawnPolyline = L.polyline(latlngs, {color: '#3498db', weight: 5, opacity: 0.8}).addTo(map);
+        function closeChat() {
+            document.getElementById('chat-modal').style.display = 'none';
+            if (chatInterval) {
+                clearInterval(chatInterval);
+                chatInterval = null;
+            }
+        }
+
+        function loadChatMessages(id) {
+            fetch(`/api/get_chat/${id}`).then(res => res.json()).then(msgs => {
+                let box = document.getElementById('chat-box');
+                let isAtBottom = box.scrollHeight - box.scrollTop <= box.clientHeight + 20;
                 
-                // Return to map view
-                document.querySelector('.nav-link').click();
-                setTimeout(() => map.fitBounds(drawnPolyline.getBounds(), {padding: [50, 50]}), 200);
+                box.innerHTML = msgs.map(m => {
+                    let content = m.text ? m.text : '';
+                    if (m.voice_id) {
+                        content += `<audio controls src="/api/get_file/${m.voice_id}" style="height: 30px; width: 100%; margin-top:5px;"></audio>`;
+                    }
+                    return `<div class="chat-msg sender-${m.sender}">${content}</div>`;
+                }).join('');
+                
+                if (isAtBottom) box.scrollTop = box.scrollHeight;
             });
         }
 
-        function clearRoute() {
-            if(drawnPolyline) map.removeLayer(drawnPolyline); 
+        function sendChatMsg() {
+            let id = document.getElementById('active-chat-id').value;
+            let input = document.getElementById('chat-input');
+            if (!input.value.trim()) return;
+            
+            fetch('/api/chat_send', { 
+                method: 'POST', 
+                headers: {'Content-Type': 'application/json'}, 
+                body: JSON.stringify({ driver_id: id, text: input.value }) 
+            }).then(() => { 
+                input.value = ''; 
+                loadChatMessages(id); 
+            });
+        }
+
+        // Analytics shift archive functions
+        function fetchArchivedShifts() {
+            fetch('/api/get_archived_shifts').then(res => res.json()).then(data => {
+                let sel = document.getElementById('analytics-shift-select');
+                sel.innerHTML = '<option value="">-- Select a Shift --</option>';
+                sel.innerHTML += data.map(s => `<option value="${s.shift_id}">${s.driver_name} (${s.date})</option>`).join('');
+            });
+        }
+
+        function loadShiftHistory() {
+            let shiftId = document.getElementById('analytics-shift-select').value;
+            if(!shiftId) return;
+            fetch(`/api/get_shift_history/${shiftId}`).then(res => res.json()).then(data => {
+                clearAnalytics();
+                if(data.route.length > 0) {
+                    let latlngs = data.route.map(p => [p.lat, p.lng]);
+                    let line = L.polyline(latlngs, {color: '#3498db', weight: 5}).addTo(analyticsLayer);
+                    analyticsMap.fitBounds(line.getBounds(), {padding: [50, 50]});
+                }
+                
+                data.anchors.forEach(a => {
+                    let popupHtml = `<b>Anchor Note:</b> ${a.note}<br>`;
+                    if (a.photo_id) {
+                        popupHtml += `<img src="/api/get_file/${a.photo_id}" style="width:150px; margin-top:5px;">`;
+                    }
+                    L.marker([a.lat, a.lng]).addTo(analyticsLayer).bindPopup(popupHtml);
+                });
+
+                let chatBox = document.getElementById('history-chat-box');
+                chatBox.innerHTML = data.chat.map(m => {
+                    let content = m.text ? m.text : '';
+                    if (m.voice_id) {
+                        content += `<audio controls src="/api/get_file/${m.voice_id}" style="height: 30px; width: 100%; margin-top:5px;"></audio>`;
+                    }
+                    return `<div class="chat-msg sender-${m.sender}">${content}</div>`;
+                }).join('');
+            });
+        }
+
+        function clearAnalytics() {
+            analyticsLayer.clearLayers();
+            document.getElementById('history-chat-box').innerHTML = '<p style="text-align:center; color:#999; font-size:12px; margin-top: 20px;">Load a shift to view chat history.</p>';
         }
 
         function viewAnchor(lat, lng) {
