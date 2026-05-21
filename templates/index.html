@@ -625,26 +625,18 @@
             btn.innerText = "⏳ Generating...";
             btn.disabled = true;
 
-            // Create a clean container specifically formatted for A4 printing
+            // 1. Create a virtual container for the PDF layout.
             let pdfDiv = document.createElement('div');
-            
-            // CRITICAL FIX: Hide the container behind the main UI layer (z-index) 
-            // instead of pushing it off-screen, ensuring html2canvas can capture it
-            pdfDiv.style.position = 'absolute';
-            pdfDiv.style.top = '0';
-            pdfDiv.style.left = '0';
-            pdfDiv.style.zIndex = '-9999'; 
-            
             pdfDiv.style.width = '800px';
             pdfDiv.style.padding = '20px';
             pdfDiv.style.backgroundColor = 'white';
             pdfDiv.style.color = 'black';
             pdfDiv.style.fontFamily = 'Arial, sans-serif';
 
-            // 1. Report Title
+            // 2. Report Title
             pdfDiv.innerHTML = `<h2 style="border-bottom: 2px solid #3498db; padding-bottom: 10px; margin-bottom: 20px;">Shift Report: ${shiftId}</h2>`;
 
-            // 2. Snapshot the Route Map
+            // 3. Snapshot the Route Map
             let mapNode = document.getElementById('analytics-map');
             
             html2canvas(mapNode, { useCORS: true }).then(canvas => {
@@ -658,14 +650,14 @@
                 pdfDiv.innerHTML += `<h3>Route Map</h3>`;
                 pdfDiv.appendChild(mapImg);
 
-                // 3. Dump the Chat as flowing text (fixes scrollbar cutoff issue)
+                // 4. Dump the Chat Log directly as text layout
                 pdfDiv.innerHTML += `<h3>Chat Log</h3>`;
                 let chatWrapper = document.createElement('div');
                 chatWrapper.style.marginBottom = '30px';
                 
                 let originalChat = document.getElementById('history-chat-box');
                 Array.from(originalChat.children).forEach(msgNode => {
-                    if(msgNode.tagName.toLowerCase() === 'p') return; // skip placeholder
+                    if(msgNode.tagName.toLowerCase() === 'p') return; // skip the empty placeholder
                     
                     let isDispatcher = msgNode.classList.contains('sender-dispatcher');
                     let isSystem = msgNode.classList.contains('sender-system');
@@ -674,14 +666,14 @@
                     let italic = isSystem ? 'italic' : 'normal';
                     
                     let textContent = msgNode.innerHTML;
-                    // Replace audio tags with plain text indicator so it prints nicely
+                    // Replace HTML audio tags with a clean text indicator
                     textContent = textContent.replace(/<audio.*<\/audio>/g, '<br><span style="color:#7f8c8d; font-size: 12px;">🎙️ [Voice Message attached]</span>');
                     
                     chatWrapper.innerHTML += `<div style="background-color: ${bg}; text-align: ${align}; font-style: ${italic}; padding: 10px; border: 1px solid #eee; border-radius: 4px; margin-bottom: 8px; page-break-inside: avoid;">${textContent}</div>`;
                 });
                 pdfDiv.appendChild(chatWrapper);
 
-                // 4. Append Visual Anchors sequentially
+                // 5. Append Visual Anchors safely
                 let anchorsContainer = document.getElementById('analytics-anchors-list');
                 if (anchorsContainer && anchorsContainer.children.length > 0) {
                     pdfDiv.innerHTML += `<h3 style="page-break-before: always; margin-bottom: 20px;">Visual Anchors</h3>`;
@@ -689,11 +681,11 @@
                     
                     Array.from(anchorsContainer.children).forEach(card => {
                         let cardClone = card.cloneNode(true);
-                        // Force blocks to stack cleanly without grid
+                        // Convert grid layout to simple block layout for safe PDF rendering
                         cardClone.style.display = 'block';
                         cardClone.style.width = '100%';
                         cardClone.style.marginBottom = '30px';
-                        cardClone.style.pageBreakInside = 'avoid'; // Prevent breaking photos in half
+                        cardClone.style.pageBreakInside = 'avoid'; // Prevent breaking an image across two pages
                         
                         let img = cardClone.querySelector('img');
                         if (img) {
@@ -706,10 +698,7 @@
                     pdfDiv.appendChild(anchorsWrapper);
                 }
 
-                // Append the assembled container to DOM for rendering
-                document.body.appendChild(pdfDiv);
-
-                // 5. Trigger final export
+                // 6. Trigger PDF export processing directly from memory
                 let opt = {
                     margin:       15,
                     filename:     `shift_report_${shiftId}.pdf`,
@@ -720,13 +709,10 @@
                 };
 
                 html2pdf().set(opt).from(pdfDiv).save().then(() => {
-                    // Cleanup phase
-                    document.body.removeChild(pdfDiv);
                     btn.innerText = originalText;
                     btn.disabled = false;
                 }).catch(err => {
                     console.error("PDF generation error:", err);
-                    document.body.removeChild(pdfDiv);
                     btn.innerText = originalText;
                     btn.disabled = false;
                     alert("Error generating PDF.");
