@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>OrientTrack - Dispatcher Dashboard</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin=""/>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
         body { display: flex; height: 100vh; background-color: #f4f6f9; }
@@ -151,7 +152,10 @@
                     </select>
                     <button class="btn-primary" onclick="loadShiftHistory()">📊 Load Analytics</button>
                     <button class="btn-primary" onclick="clearAnalytics()" style="background-color: #e74c3c;">🧹 Clear</button>
-                    <button onclick="window.location.href='/api/export_routes'" class="btn-primary" style="background-color: #2c3e50; margin-left: auto;">📥 Export CSV</button>
+                    <div style="margin-left: auto; display: flex; gap: 10px;">
+                        <button onclick="window.location.href='/api/export_routes'" class="btn-primary" style="background-color: #2c3e50;">📥 Export CSV</button>
+                        <button onclick="downloadPDF()" class="btn-primary" style="background-color: #8e44ad;">📄 Export PDF</button>
+                    </div>
                 </div>
                 <div style="display: flex; gap: 15px; flex: 1;">
                     <div id="analytics-map" class="map-container" style="flex: 2;"></div>
@@ -465,10 +469,11 @@
             if(!shiftId) return;
             fetch(`/api/get_shift_history/${shiftId}`).then(res => res.json()).then(data => {
                 clearAnalytics();
+                let bounds = [];
                 if(data.route.length > 0) {
                     let latlngs = data.route.map(p => [p.lat, p.lng]);
                     let line = L.polyline(latlngs, {color: '#3498db', weight: 5}).addTo(analyticsLayer);
-                    analyticsMap.fitBounds(line.getBounds(), {padding: [50, 50]});
+                    latlngs.forEach(p => bounds.push(p));
                 }
                 
                 data.anchors.forEach(a => {
@@ -477,7 +482,12 @@
                         popupHtml += `<img src="/api/get_file/${a.photo_id}" style="width:150px; margin-top:5px;">`;
                     }
                     L.marker([a.lat, a.lng]).addTo(analyticsLayer).bindPopup(popupHtml);
+                    bounds.push([a.lat, a.lng]);
                 });
+
+                if (bounds.length > 0) {
+                    analyticsMap.fitBounds(bounds, {padding: [50, 50]});
+                }
 
                 let chatBox = document.getElementById('history-chat-box');
                 chatBox.innerHTML = data.chat.map(m => {
@@ -498,6 +508,32 @@
         function viewAnchor(lat, lng) {
             document.querySelector('.nav-link').click(); // Switch to Map tab
             setTimeout(() => map.flyTo([lat, lng], 16, {duration: 1.5}), 200); 
+        }
+
+        // handle pdf export of the analytics dashboard
+        function downloadPDF() {
+            let shiftId = document.getElementById('analytics-shift-select').value;
+            if(!shiftId) {
+                alert("Please load a shift first to generate PDF.");
+                return;
+            }
+            
+            let element = document.querySelector('#analytics .panel');
+            let opt = {
+                margin:       10,
+                filename:     `shift_report_${shiftId}.pdf`,
+                image:        { type: 'jpeg', quality: 0.98 },
+                html2canvas:  { scale: 2, useCORS: true },
+                jsPDF:        { unit: 'mm', format: 'a4', orientation: 'landscape' }
+            };
+            
+            // hide buttons before taking the snapshot
+            let buttons = element.querySelectorAll('button');
+            buttons.forEach(b => b.style.display = 'none');
+            
+            html2pdf().set(opt).from(element).save().then(() => {
+                buttons.forEach(b => b.style.display = 'inline-block');
+            });
         }
 
         // Start polling
