@@ -108,6 +108,11 @@ def update_location():
             db.session.commit() # FORCE COMMIT to ensure ID is generated
 
         if status:
+            if driver.status != status and status != 'Offline':
+                # Log status change in chat
+                sys_msg = Message(driver_id=driver.id, sender="system", text=f"🔄 Status changed to: {status}")
+                db.session.add(sys_msg)
+
             driver.status = status
             if "Issue" not in driver.status and "SOS" not in driver.status:
                 driver.issue_text = None
@@ -173,6 +178,8 @@ def emergency():
         if driver:
             driver.status = 'SOS / Emergency'
             driver.last_update = datetime.utcnow()
+            sys_msg = Message(driver_id=driver.id, sender="system", text="🚨 EMERGENCY MODE ACTIVATED")
+            db.session.add(sys_msg)
             db.session.commit()
             logging.warning(f"EMERGENCY TRIGGERED FOR DRIVER ID: {tg_id}")
             return jsonify({"status": "emergency registered"}), 200
@@ -339,6 +346,11 @@ def add_anchor():
                 note=data.get('note', 'Visual anchor')
             )
             db.session.add(anchor)
+            
+            # System message for anchor
+            sys_msg = Message(driver_id=driver.id, sender="system", text="📸 Visual Anchor created")
+            db.session.add(sys_msg)
+            
             driver.status = 'At Anchor'
             db.session.commit()
             return jsonify({"status": "saved"}), 200

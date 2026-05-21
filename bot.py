@@ -64,6 +64,7 @@ def get_main_keyboard():
 def get_status_keyboard():
     buttons = [
         [InlineKeyboardButton(text="📦 Cargo Loaded", callback_data="status_Loaded")],
+        [InlineKeyboardButton(text="🚚 Delivery Ongoing", callback_data="status_Delivery Ongoing")],
         [InlineKeyboardButton(text="✅ Delivered", callback_data="status_Delivered")],
         [InlineKeyboardButton(text="🚨 Report Issue", callback_data="status_Issue")]
     ]
