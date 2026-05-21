@@ -358,6 +358,26 @@ def add_anchor():
     except Exception:
         return jsonify({"error": "error"}), 500
 
+# endpoint to delete a specific visual anchor
+@app.route('/api/delete_anchor/<string:anchor_id>', methods=['DELETE'])
+def delete_anchor(anchor_id):
+    try:
+        # handles both active and archived anchors based on prefix
+        if str(anchor_id).startswith('arch_'):
+            real_id = int(str(anchor_id).replace('arch_', ''))
+            anchor = ArchivedAnchor.query.get(real_id)
+        else:
+            anchor = AnchorPoint.query.get(int(anchor_id))
+            
+        if anchor:
+            db.session.delete(anchor)
+            db.session.commit()
+            return jsonify({"status": "deleted"}), 200
+        return jsonify({"error": "not found"}), 404
+    except Exception as e:
+        logging.error(f"Error deleting anchor: {e}")
+        return jsonify({"error": "Internal server error"}), 500
+
 # api for the frontend dashboard to fetch active drivers
 @app.route('/api/get_drivers', methods=['GET'])
 def get_drivers():
@@ -393,6 +413,9 @@ def get_drivers():
                                 safety_status = "alarm"
                                 safety_text = "⚠️ SIGNAL LOST"
 
+                # fetching historical route points for the active shift trail
+                route_points = RoutePoint.query.filter_by(driver_id=d.id).order_by(RoutePoint.timestamp.asc()).all()
+
                 result.append({
                     "id": d.id,
                     "name": d.name,
@@ -403,7 +426,8 @@ def get_drivers():
                     "safety_text": safety_text,
                     "lat": d.last_lat,
                     "lng": d.last_lng,
-                    "last_update": d.last_update.isoformat() + "Z" if d.last_update else None
+                    "last_update": d.last_update.isoformat() + "Z" if d.last_update else None,
+                    "route": [{"lat": p.lat, "lng": p.lng} for p in route_points]
                 })
         return jsonify(result), 200
     except Exception as e:

@@ -200,6 +200,7 @@
         L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(analyticsMap);
 
         var driverMarkers = {};
+        var driverRoutes = {}; // map store for active route lines
         var currentFilter = 'All';
         var analyticsLayer = L.layerGroup().addTo(analyticsMap);
         var isFirstLoad = true; // Auto-centering flag
@@ -331,16 +332,16 @@
             document.getElementById('driver-list').innerHTML = listHtml || "<p style='color: #7f8c8d; font-size: 14px;'>No drivers match filter.</p>";
         }
 
-        // Render Leaflet markers and handle Auto-Centering
+        // Render Leaflet markers and live routes
         function updateMapMarkers(drivers) {
             let now = new Date();
             let bounds = [];
 
             drivers.forEach(d => {
-                // Remove offline markers
-                if(d.status === 'Offline' && driverMarkers[d.id]) {
-                    map.removeLayer(driverMarkers[d.id]);
-                    delete driverMarkers[d.id];
+                // Remove offline markers and lines
+                if(d.status === 'Offline') {
+                    if(driverMarkers[d.id]) { map.removeLayer(driverMarkers[d.id]); delete driverMarkers[d.id]; }
+                    if(driverRoutes[d.id]) { map.removeLayer(driverRoutes[d.id]); delete driverRoutes[d.id]; }
                     return;
                 }
 
@@ -352,6 +353,7 @@
                     let color = (d.status.includes('Warning') || d.status.includes('SOS') || d.safety_status === 'alarm') ? '#e74c3c' : '#3498db';
                     let popupHtml = `<b>${d.name}</b><br>Status: ${d.status}<br>Seen: ${timeText}`;
 
+                    // Update or create marker
                     if(driverMarkers[d.id]) {
                         driverMarkers[d.id].setLatLng([d.lat, d.lng]).getPopup().setContent(popupHtml);
                         driverMarkers[d.id].setStyle({color: color, fillColor: color});
@@ -361,11 +363,21 @@
                         }).addTo(map).bindPopup(popupHtml);
                     }
                     
+                    // Draw or update active route trail
+                    if (d.route && d.route.length > 0) {
+                        let latlngs = d.route.map(p => [p.lat, p.lng]);
+                        if (driverRoutes[d.id]) {
+                            driverRoutes[d.id].setLatLngs(latlngs);
+                            driverRoutes[d.id].setStyle({color: color});
+                        } else {
+                            driverRoutes[d.id] = L.polyline(latlngs, {color: color, weight: 4, opacity: 0.7}).addTo(map);
+                        }
+                    }
+                    
                     bounds.push([d.lat, d.lng]);
                 }
             });
 
-            // If it's the very first load and we have active drivers, fit the map to show all of them
             if (isFirstLoad && bounds.length > 0) {
                 map.fitBounds(bounds, {padding: [50, 50]});
                 isFirstLoad = false;
@@ -396,20 +408,43 @@
             });
         }
 
-        // Render photo gallery
+        // Render photo gallery with deletion capability
         function updateAnchorsUI(anchors) {
             let grid = document.getElementById('anchors-grid-container');
             grid.innerHTML = '';
             anchors.forEach(a => {
                 let imgHtml = a.photo_id ? `<img src="/api/get_file/${a.photo_id}" class="anchor-img">` : `<div style="height:160px; background:#eee; margin-bottom:10px; display:flex; align-items:center; justify-content:center; color:#999;">No Image</div>`;
+                // parsing ID to display without 'arch_' prefix
+                let displayId = a.id.toString().replace('arch_', '');
                 grid.innerHTML += `
                     <div class="anchor-card">
                         ${imgHtml}
-                        <h4 style="margin-bottom: 5px; color: #2c3e50;">📍 Anchor #${a.id}</h4>
-                        <p style="font-size: 14px; color: #555;">${a.note}</p>
-                        <button class="btn-primary" style="margin-top: 10px; padding: 5px 10px; font-size: 12px;" onclick="viewAnchor(${a.lat}, ${a.lng})">Show on Map</button>
+                        <h4 style="margin-bottom: 5px; color: #2c3e50;">📍 Anchor #${displayId}</h4>
+                        <p style="font-size: 14px; color: #555; min-height: 20px;">${a.note}</p>
+                        <div style="margin-top: 10px; display: flex; gap: 5px; justify-content: center;">
+                            <button class="btn-primary" style="padding: 5px 10px; font-size: 12px; flex: 1;" onclick="viewAnchor(${a.lat}, ${a.lng})">🗺️ Map</button>
+                            <button class="btn-primary" style="background-color: #e74c3c; padding: 5px 10px; font-size: 12px; flex: 1;" onclick="deleteAnchor('${a.id}')">🗑️ Delete</button>
+                        </div>
                     </div>`;
             });
+        }
+
+        // new function to delete an anchor point
+        function deleteAnchor(anchorId) {
+            if(!confirm("Are you sure you want to permanently delete this visual anchor?")) return;
+            
+            fetch(`/api/delete_anchor/${anchorId}`, { method: 'DELETE' })
+                .then(res => res.json())
+                .then(data => {
+                    if(data.status === 'deleted') {
+                        fetchLiveData(); // Refresh the gallery automatically
+                    } else {
+                        alert("Failed to delete anchor. It may have already been removed.");
+                    }
+                })
+                .catch(err => {
+                    alert("Network error while attempting to delete anchor.");
+                });
         }
 
         // Chat Modal Functions
