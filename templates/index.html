@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>OrientTrack - Dispatcher Dashboard</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin=""/>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
@@ -155,7 +156,7 @@
                     <button class="btn-primary" onclick="clearAnalytics()" style="background-color: #e74c3c;">🧹 Clear</button>
                     <div style="margin-left: auto; display: flex; gap: 10px;">
                         <button onclick="window.location.href='/api/export_routes'" class="btn-primary" style="background-color: #2c3e50;">📥 Export CSV</button>
-                        <button onclick="downloadPDF()" class="btn-primary" style="background-color: #8e44ad;">📄 Export PDF</button>
+                        <button id="pdf-btn" onclick="downloadPDF()" class="btn-primary" style="background-color: #8e44ad;">📄 Export PDF</button>
                     </div>
                 </div>
                 <div style="display: flex; gap: 15px; flex: 1; min-height: 400px;">
@@ -171,7 +172,7 @@
                 <div id="analytics-anchors-report" style="margin-top: 20px; display: none;">
                     <h4 style="border-bottom: 2px solid #eee; padding-bottom: 10px; margin-bottom: 15px; color: #2c3e50;">📸 Visual Anchors Report</h4>
                     <div id="analytics-anchors-list" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 15px;">
-                        </div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -575,7 +576,7 @@
                         
                         // pdf gallery injection
                         anchorsList.innerHTML += `
-                            <div style="background: #f8f9fa; border: 1px solid #ddd; border-radius: 8px; padding: 15px;">
+                            <div class="anchor-print-card" style="background: #f8f9fa; border: 1px solid #ddd; border-radius: 8px; padding: 15px;">
                                 ${imgHtml}
                                 <p style="font-weight: bold; color: #2c3e50; font-size: 14px;">📍 Anchor #${index + 1}</p>
                                 <p style="color: #555; font-size: 13px; margin-top: 5px;">${a.note}</p>
@@ -611,7 +612,7 @@
             setTimeout(() => map.flyTo([lat, lng], 16, {duration: 1.5}), 200); 
         }
 
-        // handle pdf export of the analytics dashboard including images
+        // UPDATED: Advanced PDF Generation ensuring text flow and avoiding flexbox breaks
         function downloadPDF() {
             let shiftId = document.getElementById('analytics-shift-select').value;
             if(!shiftId) {
@@ -619,36 +620,105 @@
                 return;
             }
             
-            let element = document.querySelector('#analytics .panel');
-            let chatBox = document.getElementById('history-chat-box');
+            let btn = document.getElementById('pdf-btn');
+            let originalText = btn.innerText;
+            btn.innerText = "⏳ Generating...";
+            btn.disabled = true;
+
+            // Create a clean, off-screen container specifically formatted for A4 printing
+            let pdfDiv = document.createElement('div');
+            pdfDiv.style.width = '800px';
+            pdfDiv.style.padding = '20px';
+            pdfDiv.style.backgroundColor = 'white';
+            pdfDiv.style.color = 'black';
+            pdfDiv.style.fontFamily = 'Arial, sans-serif';
+
+            // 1. Report Title
+            pdfDiv.innerHTML = `<h2 style="border-bottom: 2px solid #3498db; padding-bottom: 10px; margin-bottom: 20px;">Shift Report: ${shiftId}</h2>`;
+
+            // 2. Snapshot the Route Map
+            let mapNode = document.getElementById('analytics-map');
             
-            // Expand all scrollable containers temporarily for the snapshot
-            let originalHeight = element.style.height;
-            let originalChatHeight = chatBox.style.height;
-            let originalChatOverflow = chatBox.style.overflowY;
-            
-            element.style.height = 'auto';
-            chatBox.style.height = 'auto';
-            chatBox.style.overflowY = 'visible';
-            
-            let opt = {
-                margin:       10,
-                filename:     `shift_report_${shiftId}.pdf`,
-                image:        { type: 'jpeg', quality: 0.98 },
-                html2canvas:  { scale: 2, useCORS: true },
-                jsPDF:        { unit: 'mm', format: 'a4', orientation: 'portrait' } 
-            };
-            
-            // hide buttons before taking the snapshot
-            let buttons = element.querySelectorAll('button');
-            buttons.forEach(b => b.style.display = 'none');
-            
-            html2pdf().set(opt).from(element).save().then(() => {
-                // restore all UI elements
-                buttons.forEach(b => b.style.display = 'inline-block');
-                element.style.height = originalHeight;
-                chatBox.style.height = originalChatHeight;
-                chatBox.style.overflowY = originalChatOverflow;
+            html2canvas(mapNode, { useCORS: true }).then(canvas => {
+                let mapImg = document.createElement('img');
+                mapImg.src = canvas.toDataURL('image/jpeg');
+                mapImg.style.width = '100%';
+                mapImg.style.border = '1px solid #ddd';
+                mapImg.style.borderRadius = '4px';
+                mapImg.style.marginBottom = '30px';
+                
+                pdfDiv.innerHTML += `<h3>Route Map</h3>`;
+                pdfDiv.appendChild(mapImg);
+
+                // 3. Dump the Chat as flowing text (fixes scrollbar cutoff issue)
+                pdfDiv.innerHTML += `<h3>Chat Log</h3>`;
+                let chatWrapper = document.createElement('div');
+                chatWrapper.style.marginBottom = '30px';
+                
+                let originalChat = document.getElementById('history-chat-box');
+                Array.from(originalChat.children).forEach(msgNode => {
+                    if(msgNode.tagName.toLowerCase() === 'p') return; // skip placeholder
+                    
+                    let isDispatcher = msgNode.classList.contains('sender-dispatcher');
+                    let isSystem = msgNode.classList.contains('sender-system');
+                    let bg = isDispatcher ? '#dcf8c6' : (isSystem ? 'transparent' : '#f9f9f9');
+                    let align = isSystem ? 'center' : 'left';
+                    let italic = isSystem ? 'italic' : 'normal';
+                    
+                    let textContent = msgNode.innerHTML;
+                    // Replace audio tags with plain text indicator so it prints nicely
+                    textContent = textContent.replace(/<audio.*<\/audio>/g, '<br><span style="color:#7f8c8d; font-size: 12px;">🎙️ [Voice Message attached]</span>');
+                    
+                    chatWrapper.innerHTML += `<div style="background-color: ${bg}; text-align: ${align}; font-style: ${italic}; padding: 10px; border: 1px solid #eee; border-radius: 4px; margin-bottom: 8px; page-break-inside: avoid;">${textContent}</div>`;
+                });
+                pdfDiv.appendChild(chatWrapper);
+
+                // 4. Append Visual Anchors sequentially
+                let anchorsContainer = document.getElementById('analytics-anchors-list');
+                if (anchorsContainer && anchorsContainer.children.length > 0) {
+                    pdfDiv.innerHTML += `<h3 style="page-break-before: always; margin-bottom: 20px;">Visual Anchors</h3>`;
+                    let anchorsWrapper = document.createElement('div');
+                    
+                    Array.from(anchorsContainer.children).forEach(card => {
+                        let cardClone = card.cloneNode(true);
+                        // Force blocks to stack cleanly without grid
+                        cardClone.style.display = 'block';
+                        cardClone.style.width = '100%';
+                        cardClone.style.marginBottom = '30px';
+                        cardClone.style.pageBreakInside = 'avoid'; // Prevent breaking photos in half
+                        
+                        let img = cardClone.querySelector('img');
+                        if (img) {
+                            img.style.maxHeight = '400px';
+                            img.style.width = '100%';
+                            img.style.objectFit = 'contain';
+                        }
+                        anchorsWrapper.appendChild(cardClone);
+                    });
+                    pdfDiv.appendChild(anchorsWrapper);
+                }
+
+                // Hide container off-screen
+                pdfDiv.style.position = 'absolute';
+                pdfDiv.style.left = '-9999px';
+                document.body.appendChild(pdfDiv);
+
+                // 5. Trigger final export
+                let opt = {
+                    margin:       15,
+                    filename:     `shift_report_${shiftId}.pdf`,
+                    image:        { type: 'jpeg', quality: 0.98 },
+                    html2canvas:  { scale: 2, useCORS: true },
+                    jsPDF:        { unit: 'mm', format: 'a4', orientation: 'portrait' },
+                    pagebreak:    { mode: ['avoid-all', 'css', 'legacy'] }
+                };
+
+                html2pdf().set(opt).from(pdfDiv).save().then(() => {
+                    // Cleanup
+                    document.body.removeChild(pdfDiv);
+                    btn.innerText = originalText;
+                    btn.disabled = false;
+                });
             });
         }
 
