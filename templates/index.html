@@ -201,6 +201,7 @@
 
         var driverMarkers = {};
         var driverRoutes = {}; // map store for active route lines
+        var liveAnchorMarkers = {}; // active anchor markers layer
         var currentFilter = 'All';
         var analyticsLayer = L.layerGroup().addTo(analyticsMap);
         var isFirstLoad = true; // Auto-centering flag
@@ -408,14 +409,21 @@
             });
         }
 
-        // Render photo gallery with deletion capability
+        // Render photo gallery and live map anchor markers
         function updateAnchorsUI(anchors) {
             let grid = document.getElementById('anchors-grid-container');
             grid.innerHTML = '';
+            
+            // set to track which anchors are currently active
+            let currentActiveIds = new Set();
+
             anchors.forEach(a => {
-                let imgHtml = a.photo_id ? `<img src="/api/get_file/${a.photo_id}" class="anchor-img">` : `<div style="height:160px; background:#eee; margin-bottom:10px; display:flex; align-items:center; justify-content:center; color:#999;">No Image</div>`;
-                // parsing ID to display without 'arch_' prefix
+                let isArchived = a.id.toString().startsWith('arch_');
                 let displayId = a.id.toString().replace('arch_', '');
+                
+                // 1. Render in the UI Gallery
+                let imgHtml = a.photo_id ? `<img src="/api/get_file/${a.photo_id}" class="anchor-img">` : `<div style="height:160px; background:#eee; margin-bottom:10px; display:flex; align-items:center; justify-content:center; color:#999;">No Image</div>`;
+                
                 grid.innerHTML += `
                     <div class="anchor-card">
                         ${imgHtml}
@@ -426,6 +434,34 @@
                             <button class="btn-primary" style="background-color: #e74c3c; padding: 5px 10px; font-size: 12px; flex: 1;" onclick="deleteAnchor('${a.id}')">🗑️ Delete</button>
                         </div>
                     </div>`;
+
+                // 2. Plot on Live Map (only active anchors)
+                if (!isArchived) {
+                    let strId = a.id.toString();
+                    currentActiveIds.add(strId);
+                    
+                    if (!liveAnchorMarkers[strId]) {
+                        // create a custom divIcon using an emoji instead of image file
+                        let anchorIcon = L.divIcon({
+                            html: '<div style="font-size: 22px; text-shadow: 2px 2px 4px rgba(0,0,0,0.4);">📸</div>',
+                            className: '', 
+                            iconSize: [24, 24],
+                            iconAnchor: [12, 12]
+                        });
+                        
+                        let marker = L.marker([a.lat, a.lng], {icon: anchorIcon}).addTo(map);
+                        marker.bindPopup(`<b>📸 Active Anchor #${strId}</b><br>${a.note}`);
+                        liveAnchorMarkers[strId] = marker;
+                    }
+                }
+            });
+
+            // 3. Cleanup markers that are no longer active (reset shift or deleted)
+            Object.keys(liveAnchorMarkers).forEach(id => {
+                if (!currentActiveIds.has(id)) {
+                    map.removeLayer(liveAnchorMarkers[id]);
+                    delete liveAnchorMarkers[id];
+                }
             });
         }
 
