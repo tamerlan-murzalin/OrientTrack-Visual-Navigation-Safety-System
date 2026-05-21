@@ -3,7 +3,7 @@ import os
 # Server settings
 SERVER_HOST = "127.0.0.1"
 SERVER_PORT = 5002
-SERVER_URL = f"http://{SERVER_HOST}:{SERVER_PORT}"
+SERVER_URL = os.getenv("SERVER_URL", f"http://{SERVER_HOST}:{SERVER_PORT}")
 
 # Database settings
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
