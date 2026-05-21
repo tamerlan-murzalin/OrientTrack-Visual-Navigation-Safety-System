@@ -612,7 +612,7 @@
             setTimeout(() => map.flyTo([lat, lng], 16, {duration: 1.5}), 200); 
         }
 
-        // UPDATED: Advanced PDF Generation ensuring text flow and avoiding flexbox breaks
+       // PDF Generation ensuring text flow and avoiding flexbox breaks
         function downloadPDF() {
             let shiftId = document.getElementById('analytics-shift-select').value;
             if(!shiftId) {
@@ -625,8 +625,16 @@
             btn.innerText = "⏳ Generating...";
             btn.disabled = true;
 
-            // Create a clean, off-screen container specifically formatted for A4 printing
+            // Create a clean container specifically formatted for A4 printing
             let pdfDiv = document.createElement('div');
+            
+            // CRITICAL FIX: Hide the container behind the main UI layer (z-index) 
+            // instead of pushing it off-screen, ensuring html2canvas can capture it
+            pdfDiv.style.position = 'absolute';
+            pdfDiv.style.top = '0';
+            pdfDiv.style.left = '0';
+            pdfDiv.style.zIndex = '-9999'; 
+            
             pdfDiv.style.width = '800px';
             pdfDiv.style.padding = '20px';
             pdfDiv.style.backgroundColor = 'white';
@@ -698,9 +706,7 @@
                     pdfDiv.appendChild(anchorsWrapper);
                 }
 
-                // Hide container off-screen
-                pdfDiv.style.position = 'absolute';
-                pdfDiv.style.left = '-9999px';
+                // Append the assembled container to DOM for rendering
                 document.body.appendChild(pdfDiv);
 
                 // 5. Trigger final export
@@ -714,10 +720,16 @@
                 };
 
                 html2pdf().set(opt).from(pdfDiv).save().then(() => {
-                    // Cleanup
+                    // Cleanup phase
                     document.body.removeChild(pdfDiv);
                     btn.innerText = originalText;
                     btn.disabled = false;
+                }).catch(err => {
+                    console.error("PDF generation error:", err);
+                    document.body.removeChild(pdfDiv);
+                    btn.innerText = originalText;
+                    btn.disabled = false;
+                    alert("Error generating PDF.");
                 });
             });
         }
