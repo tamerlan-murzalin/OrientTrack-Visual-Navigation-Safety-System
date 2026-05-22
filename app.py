@@ -56,7 +56,6 @@ class Message(db.Model):
     driver_id = db.Column(db.Integer, db.ForeignKey('driver.id'))
     sender = db.Column(db.String(50)) 
     text = db.Column(db.Text, nullable=True)
-    voice_id = db.Column(db.String(100), nullable=True)
     timestamp = db.Column(db.DateTime, default=datetime.utcnow)
 
 # archived models with shift_id for grouping
@@ -83,7 +82,6 @@ class ArchivedMessage(db.Model):
     shift_id = db.Column(db.String(100))
     sender = db.Column(db.String(50)) 
     text = db.Column(db.Text)
-    voice_id = db.Column(db.String(100))
     timestamp = db.Column(db.DateTime)
 
 with app.app_context():
@@ -105,11 +103,10 @@ def update_location():
         if not driver:
             driver = Driver(telegram_id=tg_id, name=name)
             db.session.add(driver)
-            db.session.commit() # FORCE COMMIT to ensure ID is generated
+            db.session.commit()
 
         if status:
             if driver.status != status and status != 'Offline':
-                # Log status change in chat
                 sys_msg = Message(driver_id=driver.id, sender="system", text=f"🔄 Status changed to: {status}")
                 db.session.add(sys_msg)
 
@@ -234,7 +231,7 @@ def chat_receive():
         data = request.json
         driver = Driver.query.filter_by(telegram_id=str(data.get('telegram_id'))).first()
         if driver:
-            msg = Message(driver_id=driver.id, sender="driver", text=data.get('text'), voice_id=data.get('voice_id'))
+            msg = Message(driver_id=driver.id, sender="driver", text=data.get('text'))
             db.session.add(msg)
             db.session.commit()
             return jsonify({"status": "success"}), 200
@@ -261,7 +258,7 @@ def chat_send():
 @app.route('/api/get_chat/<int:driver_id>', methods=['GET'])
 def get_chat(driver_id):
     messages = Message.query.filter_by(driver_id=driver_id).order_by(Message.timestamp.asc()).all()
-    res = [{"sender": m.sender, "text": m.text, "voice_id": m.voice_id, "time": m.timestamp.isoformat() + "Z"} for m in messages]
+    res = [{"sender": m.sender, "text": m.text, "time": m.timestamp.isoformat() + "Z"} for m in messages]
     return jsonify(res), 200
 
 # handling safety timer logic
@@ -299,7 +296,7 @@ def reset_route():
         for a in AnchorPoint.query.filter_by(driver_id=driver.id).all():
             db.session.add(ArchivedAnchor(shift_id=shift_id, lat=a.lat, lng=a.lng, photo_id=a.photo_id, note=a.note, timestamp=a.timestamp))
         for m in Message.query.filter_by(driver_id=driver.id).all():
-            db.session.add(ArchivedMessage(shift_id=shift_id, sender=m.sender, text=m.text, voice_id=m.voice_id, timestamp=m.timestamp))
+            db.session.add(ArchivedMessage(shift_id=shift_id, sender=m.sender, text=m.text, timestamp=m.timestamp))
             
         RoutePoint.query.filter_by(driver_id=driver.id).delete()
         AnchorPoint.query.filter_by(driver_id=driver.id).delete()
@@ -332,7 +329,6 @@ def add_anchor():
             )
             db.session.add(anchor)
             
-            # System message for anchor
             sys_msg = Message(driver_id=driver.id, sender="system", text="📸 Visual Anchor created")
             db.session.add(sys_msg)
             
@@ -347,7 +343,6 @@ def add_anchor():
 @app.route('/api/delete_anchor/<string:anchor_id>', methods=['DELETE'])
 def delete_anchor(anchor_id):
     try:
-        # handles both active and archived anchors based on prefix
         if str(anchor_id).startswith('arch_'):
             real_id = int(str(anchor_id).replace('arch_', ''))
             anchor = ArchivedAnchor.query.get(real_id)
@@ -398,7 +393,6 @@ def get_drivers():
                                 safety_status = "alarm"
                                 safety_text = "⚠️ SIGNAL LOST"
 
-                # fetching historical route points for the active shift trail
                 route_points = RoutePoint.query.filter_by(driver_id=d.id).order_by(RoutePoint.timestamp.asc()).all()
 
                 result.append({
@@ -434,7 +428,7 @@ def get_archived_shifts():
     shifts = db.session.query(ArchivedRoute.shift_id, ArchivedRoute.driver_name, db.func.min(ArchivedRoute.timestamp).label('start')).group_by(ArchivedRoute.shift_id, ArchivedRoute.driver_name).order_by(db.desc('start')).all()
     return jsonify([{"shift_id": s.shift_id, "driver_name": s.driver_name, "date": s.start.strftime("%Y-%m-%d %H:%M")} for s in shifts]), 200
 
-# fetches all historical data (route, anchors, chat) for a specific shift
+# fetches all historical data for a specific shift including timestamp for route points
 @app.route('/api/get_shift_history/<string:shift_id>', methods=['GET'])
 def get_shift_history(shift_id):
     routes = ArchivedRoute.query.filter_by(shift_id=shift_id).order_by(ArchivedRoute.timestamp.asc()).all()
@@ -442,12 +436,12 @@ def get_shift_history(shift_id):
     chats = ArchivedMessage.query.filter_by(shift_id=shift_id).order_by(ArchivedMessage.timestamp.asc()).all()
     
     return jsonify({
-        "route": [{"lat": r.lat, "lng": r.lng} for r in routes],
+        "route": [{"lat": r.lat, "lng": r.lng, "timestamp": r.timestamp.isoformat() + "Z" if r.timestamp else None} for r in routes],
         "anchors": [{"lat": a.lat, "lng": a.lng, "note": a.note, "photo_id": a.photo_id} for a in anchors],
-        "chat": [{"sender": c.sender, "text": c.text, "voice_id": c.voice_id, "time": c.timestamp.isoformat() + "Z"} for c in chats]
+        "chat": [{"sender": c.sender, "text": c.text, "time": c.timestamp.isoformat() + "Z"} for c in chats]
     }), 200
 
-# universal media fetcher (photos and voice) proxying from telegram
+# universal media fetcher (photos) proxying from telegram
 @app.route('/api/get_file/<string:file_id>', methods=['GET'])
 def get_file(file_id):
     try:
