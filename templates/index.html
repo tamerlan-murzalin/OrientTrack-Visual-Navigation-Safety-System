@@ -5,8 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>OrientTrack - Dispatcher Dashboard</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin=""/>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
         body { display: flex; height: 100vh; background-color: #f4f6f9; }
@@ -156,7 +154,6 @@
                     <button class="btn-primary" onclick="clearAnalytics()" style="background-color: #e74c3c;">🧹 Clear</button>
                     <div style="margin-left: auto; display: flex; gap: 10px;">
                         <button onclick="window.location.href='/api/export_routes'" class="btn-primary" style="background-color: #2c3e50;">📥 Export CSV</button>
-                        <button id="pdf-btn" onclick="downloadPDF()" class="btn-primary" style="background-color: #8e44ad;">📄 Export PDF</button>
                     </div>
                 </div>
                 <div style="display: flex; gap: 15px; flex: 1; min-height: 400px;">
@@ -509,9 +506,6 @@
                 
                 box.innerHTML = msgs.map(m => {
                     let content = m.text ? m.text : '';
-                    if (m.voice_id) {
-                        content += `<audio controls src="/api/get_file/${m.voice_id}" style="height: 30px; width: 100%; margin-top:5px;"></audio>`;
-                    }
                     return `<div class="chat-msg sender-${m.sender}">${content}</div>`;
                 }).join('');
                 
@@ -592,9 +586,6 @@
                 let chatBox = document.getElementById('history-chat-box');
                 chatBox.innerHTML = data.chat.map(m => {
                     let content = m.text ? m.text : '';
-                    if (m.voice_id) {
-                        content += `<audio controls src="/api/get_file/${m.voice_id}" style="height: 30px; width: 100%; margin-top:5px;"></audio>`;
-                    }
                     return `<div class="chat-msg sender-${m.sender}">${content}</div>`;
                 }).join('');
             });
@@ -610,114 +601,6 @@
         function viewAnchor(lat, lng) {
             document.querySelector('.nav-link').click(); // Switch to Map tab
             setTimeout(() => map.flyTo([lat, lng], 16, {duration: 1.5}), 200); 
-        }
-
-       // PDF Generation ensuring text flow and avoiding flexbox breaks
-        function downloadPDF() {
-            let shiftId = document.getElementById('analytics-shift-select').value;
-            if(!shiftId) {
-                alert("Please load a shift first to generate PDF.");
-                return;
-            }
-            
-            let btn = document.getElementById('pdf-btn');
-            let originalText = btn.innerText;
-            btn.innerText = "⏳ Generating...";
-            btn.disabled = true;
-
-            // 1. Create a virtual container for the PDF layout.
-            let pdfDiv = document.createElement('div');
-            pdfDiv.style.width = '800px';
-            pdfDiv.style.padding = '20px';
-            pdfDiv.style.backgroundColor = 'white';
-            pdfDiv.style.color = 'black';
-            pdfDiv.style.fontFamily = 'Arial, sans-serif';
-
-            // 2. Report Title
-            pdfDiv.innerHTML = `<h2 style="border-bottom: 2px solid #3498db; padding-bottom: 10px; margin-bottom: 20px;">Shift Report: ${shiftId}</h2>`;
-
-            // 3. Snapshot the Route Map
-            let mapNode = document.getElementById('analytics-map');
-            
-            html2canvas(mapNode, { useCORS: true }).then(canvas => {
-                let mapImg = document.createElement('img');
-                mapImg.src = canvas.toDataURL('image/jpeg');
-                mapImg.style.width = '100%';
-                mapImg.style.border = '1px solid #ddd';
-                mapImg.style.borderRadius = '4px';
-                mapImg.style.marginBottom = '30px';
-                
-                pdfDiv.innerHTML += `<h3>Route Map</h3>`;
-                pdfDiv.appendChild(mapImg);
-
-                // 4. Dump the Chat Log directly as text layout
-                pdfDiv.innerHTML += `<h3>Chat Log</h3>`;
-                let chatWrapper = document.createElement('div');
-                chatWrapper.style.marginBottom = '30px';
-                
-                let originalChat = document.getElementById('history-chat-box');
-                Array.from(originalChat.children).forEach(msgNode => {
-                    if(msgNode.tagName.toLowerCase() === 'p') return; // skip the empty placeholder
-                    
-                    let isDispatcher = msgNode.classList.contains('sender-dispatcher');
-                    let isSystem = msgNode.classList.contains('sender-system');
-                    let bg = isDispatcher ? '#dcf8c6' : (isSystem ? 'transparent' : '#f9f9f9');
-                    let align = isSystem ? 'center' : 'left';
-                    let italic = isSystem ? 'italic' : 'normal';
-                    
-                    let textContent = msgNode.innerHTML;
-                    // Replace HTML audio tags with a clean text indicator
-                    textContent = textContent.replace(/<audio.*<\/audio>/g, '<br><span style="color:#7f8c8d; font-size: 12px;">🎙️ [Voice Message attached]</span>');
-                    
-                    chatWrapper.innerHTML += `<div style="background-color: ${bg}; text-align: ${align}; font-style: ${italic}; padding: 10px; border: 1px solid #eee; border-radius: 4px; margin-bottom: 8px; page-break-inside: avoid;">${textContent}</div>`;
-                });
-                pdfDiv.appendChild(chatWrapper);
-
-                // 5. Append Visual Anchors safely
-                let anchorsContainer = document.getElementById('analytics-anchors-list');
-                if (anchorsContainer && anchorsContainer.children.length > 0) {
-                    pdfDiv.innerHTML += `<h3 style="page-break-before: always; margin-bottom: 20px;">Visual Anchors</h3>`;
-                    let anchorsWrapper = document.createElement('div');
-                    
-                    Array.from(anchorsContainer.children).forEach(card => {
-                        let cardClone = card.cloneNode(true);
-                        // Convert grid layout to simple block layout for safe PDF rendering
-                        cardClone.style.display = 'block';
-                        cardClone.style.width = '100%';
-                        cardClone.style.marginBottom = '30px';
-                        cardClone.style.pageBreakInside = 'avoid'; // Prevent breaking an image across two pages
-                        
-                        let img = cardClone.querySelector('img');
-                        if (img) {
-                            img.style.maxHeight = '400px';
-                            img.style.width = '100%';
-                            img.style.objectFit = 'contain';
-                        }
-                        anchorsWrapper.appendChild(cardClone);
-                    });
-                    pdfDiv.appendChild(anchorsWrapper);
-                }
-
-                // 6. Trigger PDF export processing directly from memory
-                let opt = {
-                    margin:       15,
-                    filename:     `shift_report_${shiftId}.pdf`,
-                    image:        { type: 'jpeg', quality: 0.98 },
-                    html2canvas:  { scale: 2, useCORS: true },
-                    jsPDF:        { unit: 'mm', format: 'a4', orientation: 'portrait' },
-                    pagebreak:    { mode: ['avoid-all', 'css', 'legacy'] }
-                };
-
-                html2pdf().set(opt).from(pdfDiv).save().then(() => {
-                    btn.innerText = originalText;
-                    btn.disabled = false;
-                }).catch(err => {
-                    console.error("PDF generation error:", err);
-                    btn.innerText = originalText;
-                    btn.disabled = false;
-                    alert("Error generating PDF.");
-                });
-            });
         }
 
         // Start polling

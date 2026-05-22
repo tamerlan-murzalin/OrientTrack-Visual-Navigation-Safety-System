@@ -205,21 +205,6 @@ def receive_issue():
     except Exception as e:
         return jsonify({"error": "Internal server error"}), 500
 
-# receiving voice messages for issues
-@app.route('/api/voice', methods=['POST'])
-def receive_voice():
-    try:
-        data = request.json
-        driver = Driver.query.filter_by(telegram_id=str(data.get('telegram_id'))).first()
-        if driver:
-            msg = Message(driver_id=driver.id, sender="driver", text=data.get('text'), voice_id=data.get('voice_id'))
-            db.session.add(msg)
-            db.session.commit()
-            return jsonify({"status": "success"}), 200
-        return jsonify({"error": "driver not found"}), 404
-    except Exception as e:
-        return jsonify({"error": "Internal server error"}), 500
-
 # dispatcher replying to issue via bot
 @app.route('/api/reply_issue', methods=['POST'])
 def reply_issue():

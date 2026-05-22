@@ -16,7 +16,6 @@ EMERGENCY_URL = f"{config.SERVER_URL}/api/emergency"
 SETNAME_URL = f"{config.SERVER_URL}/api/update_name"
 RESET_URL = f"{config.SERVER_URL}/api/reset_route"
 ISSUE_URL = f"{config.SERVER_URL}/api/issue"
-VOICE_URL = f"{config.SERVER_URL}/api/voice"
 CHAT_RECEIVE_URL = f"{config.SERVER_URL}/api/chat_receive"
 SAFETY_URL = f"{config.SERVER_URL}/api/safety"
 
@@ -128,7 +127,7 @@ async def update_status_menu(message: types.Message):
 @dp.callback_query(F.data.startswith("status_"))
 async def process_status_callback(callback: types.CallbackQuery, state: FSMContext):
     if callback.data == "status_Issue":
-        await callback.message.edit_text("🚨 Please describe the issue briefly (or send a voice message):")
+        await callback.message.edit_text("🚨 Please describe the issue briefly:")
         await state.set_state(AppState.waiting_for_issue_text)
         await callback.answer()
         return
@@ -307,14 +306,6 @@ async def process_standard_timer(message: types.Message):
     async with aiohttp.ClientSession() as session:
         await session.post(SAFETY_URL, json={"telegram_id": str(message.from_user.id), "action": action, "hours": hours})
     await message.answer("✅ Timer updated.", reply_markup=get_main_keyboard())
-
-# safety feature - handling voice reports
-@dp.message(F.voice)
-async def handle_voice_chat(message: types.Message, state: FSMContext):
-    async with aiohttp.ClientSession() as session:
-        await session.post(CHAT_RECEIVE_URL, json={"telegram_id": str(message.from_user.id), "voice_id": message.voice.file_id})
-    await message.answer("🎙️ Voice delivered.")
-    await state.clear()
 
 # handling driver free-text chat to dispatcher
 @dp.message(F.text, ~F.text.in_(menu_buttons))
