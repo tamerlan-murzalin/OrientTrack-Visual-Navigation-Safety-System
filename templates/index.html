@@ -284,6 +284,13 @@
                 routeEnd = null;
             }
         }
+        map.on('click', function(e) {
+            if (routeStart !== null) {
+                routeEnd = e.latlng;
+                initRouting();
+                routingControl.setWaypoints([routeStart, routeEnd]);
+            }
+        });
 
         function sendReply(event, driverId) {
             event.stopPropagation();
